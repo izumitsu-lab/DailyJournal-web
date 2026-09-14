@@ -1,5 +1,5 @@
 // ==========================================
-// supabase-sync.js (Supabase 連携・クラウド差分同期・究極安全版)
+// supabase-sync.js (Supabase 連携・クラウド差分同期・設定同期 完璧版)
 // ==========================================
 
 let supabaseClient = null;
@@ -144,13 +144,14 @@ async function uploadImageToSupabase(base64Str) {
 }
 
 // ==========================================
-// 4. 設定の同期 (Push)
+// 4. 設定（カテゴリなど）の同期 (Push)
 // ==========================================
 
-function triggerSettingsSync() {
+function triggerSettingsSync(immediate = false) {
     if (!supabaseClient || !supabaseUser || isSyncing) return;
     clearTimeout(settingsSyncTimer);
-    settingsSyncTimer = setTimeout(async () => {
+
+    const doSync = async () => {
         try {
             const payload = {
                 user_id: supabaseUser.id,
@@ -163,8 +164,13 @@ function triggerSettingsSync() {
                 updated_at: new Date().toISOString()
             };
             await supabaseClient.from('app_settings').upsert(payload);
-        } catch(e) {}
-    }, 1000);
+        } catch(e) {
+            console.error("設定同期エラー:", e);
+        }
+    };
+
+    if (immediate) doSync();
+    else settingsSyncTimer = setTimeout(doSync, 1000);
 }
 
 function hookIntoSettingsSave() {
@@ -190,7 +196,6 @@ function hookIntoAppSave() {
         window._originalSaveJournalData = saveJournalData;
         
         saveJournalData = async function() {
-            // ★超重要: まず何があっても必ずローカル（本体）に保存する
             await window._originalSaveJournalData();
 
             if (supabaseClient && supabaseUser && !isSyncing) {
@@ -230,7 +235,6 @@ function hookIntoAppSave() {
                         }
                     }
 
-                    // 画像がURL化された場合はもう一度ローカルに保存
                     if (localNeedsResave) await window._originalSaveJournalData();
 
                     if (payload.length > 0) {
@@ -253,7 +257,6 @@ function hookIntoAppSave() {
         window._originalSaveNotebookData = saveNotebookData;
         
         saveNotebookData = async function() {
-            // ★超重要: まず何があっても必ずローカル（本体）に保存する
             await window._originalSaveNotebookData();
 
             if (supabaseClient && supabaseUser && !isSyncing) {
@@ -273,13 +276,10 @@ function hookIntoAppSave() {
                                 const url = await uploadImageToSupabase(img.src);
                                 if (url && url !== img.src) {
                                     img.src = url;
-                                    isModified = true;
+                                    localNeedsResave = true;
                                 }
                             }
-                            if (isModified) {
-                                note.content = tempDiv.innerHTML;
-                                localNeedsResave = true;
-                            }
+                            if (localNeedsResave) note.content = tempDiv.innerHTML;
                         }
 
                         const currentJson = JSON.stringify(note);
@@ -328,13 +328,43 @@ async function pullFromSupabase() {
         console.log("クラウドからデータを同期中...");
 
         // --- 1. 設定の取得 ---
-        const { data: settingsDb } = await supabaseClient.from('app_settings').select('*').eq('user_id', supabaseUser.id).single();
+        const { data: settingsDb, error: sError } = await supabaseClient.from('app_settings').select('*').eq('user_id', supabaseUser.id).single();
+        
         if (settingsDb && settingsDb.settings_data) {
+            // クラウドから設定をダウンロード（参照を壊さずに中身を詰め替える）
             const s = settingsDb.settings_data;
-            if (s.appTypes && typeof appTypes !== 'undefined') { appTypes = s.appTypes; localStorage.setItem('daily_journal_types', JSON.stringify(appTypes)); }
-            if (s.categories && typeof categories !== 'undefined') { categories = s.categories; localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); }
-            if (s.typeSlackSettings && typeof typeSlackSettings !== 'undefined') { typeSlackSettings = s.typeSlackSettings; localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); }
-            if (s.typeNotebookSettings && typeof typeNotebookSettings !== 'undefined') { typeNotebookSettings = s.typeNotebookSettings; localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); }
+            let hasChanges = false;
+
+            if (s.appTypes && typeof appTypes !== 'undefined') { 
+                appTypes.splice(0, appTypes.length, ...s.appTypes);
+                localStorage.setItem('daily_journal_types', JSON.stringify(appTypes)); 
+                hasChanges = true;
+            }
+            if (s.categories && typeof categories !== 'undefined') { 
+                categories.splice(0, categories.length, ...s.categories);
+                localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); 
+                hasChanges = true;
+            }
+            if (s.typeSlackSettings && typeof typeSlackSettings !== 'undefined') { 
+                Object.keys(typeSlackSettings).forEach(k => delete typeSlackSettings[k]);
+                Object.assign(typeSlackSettings, s.typeSlackSettings);
+                localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); 
+                hasChanges = true;
+            }
+            if (s.typeNotebookSettings && typeof typeNotebookSettings !== 'undefined') { 
+                Object.keys(typeNotebookSettings).forEach(k => delete typeNotebookSettings[k]);
+                Object.assign(typeNotebookSettings, s.typeNotebookSettings);
+                localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); 
+                hasChanges = true;
+            }
+
+            if (hasChanges && typeof syncAndMigrateCategories === 'function') {
+                await syncAndMigrateCategories();
+            }
+        } else if (sError && sError.code === 'PGRST116') {
+            // ★超重要：クラウドに設定データが無い場合（初回）、現在のローカル設定を即座にクラウドへアップロードする
+            console.log("クラウドに設定データがありません。現在の設定をアップロードします。");
+            triggerSettingsSync(true);
         }
 
         // --- 2. Journals の取得 ---
@@ -345,11 +375,7 @@ async function pullFromSupabase() {
 
             journalsDb.forEach(row => {
                 const localLogs = jData[row.date_str] || [];
-                // ★防波堤: ローカル(本体)の方が件数が多い場合は、クラウドの古いデータで上書きしない！
-                if (localLogs.length > row.log_data.length) {
-                    console.warn(`[Sync] ${row.date_str}は本体のデータが最新のため上書きをスキップします`);
-                    return; 
-                }
+                if (localLogs.length > row.log_data.length) return; 
                 
                 jData[row.date_str] = row.log_data;
                 lastSyncedJournals[row.date_str] = JSON.stringify(row.log_data);
@@ -368,11 +394,7 @@ async function pullFromSupabase() {
 
             notebooksDb.forEach(row => {
                 const existingIndex = nData.findIndex(n => n.id === row.id);
-                // ★防波堤: 本体の方が更新日時が新しい場合は上書きしない！
-                if (existingIndex !== -1 && new Date(nData[existingIndex].updatedAt) > new Date(row.updated_at)) {
-                    console.warn(`[Sync] ノート ${row.id} は本体のデータが最新のため上書きをスキップします`);
-                    return;
-                }
+                if (existingIndex !== -1 && new Date(nData[existingIndex].updatedAt) > new Date(row.updated_at)) return;
 
                 const noteObj = {
                     id: row.id, title: row.title, content: row.content, category: row.category,
@@ -389,11 +411,14 @@ async function pullFromSupabase() {
             if (needLocalSave && typeof window._originalSaveNotebookData === 'function') await window._originalSaveNotebookData();
         }
 
-        // --- 4. 画面の再描画 ---
+        // --- 4. 画面の完全再描画 ---
         if (typeof updateCategoryButtonUI === 'function') updateCategoryButtonUI();
         if (typeof renderSettingsTypeList === 'function') renderSettingsTypeList();
         if (typeof renderSettingsCategoryList === 'function') renderSettingsCategoryList();
         if (typeof renderRightCards === 'function') renderRightCards();
+        if (typeof renderNotebookSidebar === 'function' && typeof calendarScope !== 'undefined' && calendarScope === 'notebooks') {
+            renderNotebookSidebar();
+        }
         if (typeof renderMiniCalendar === 'function' && typeof sidebarMode !== 'undefined' && sidebarMode === 'cal' && typeof calendarScope !== 'undefined' && calendarScope !== 'notebooks') {
             renderMiniCalendar();
         }
