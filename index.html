@@ -38,9 +38,6 @@
 </head>
 <body>
 
-    <!-- グローバルトースト通知（同期状態などの表示用） -->
-    <div id="globalToast" class="global-toast"></div>
-
     <!-- メインビュー -->
     <div class="views-container">
         <!-- サイドバー (幅230px) -->
@@ -153,8 +150,8 @@
             <span id="btnCalendarLinkLabel">カレンダー</span>
         </button>
 
-        <!-- 6-alt. 更新ボタン（PC時のみ表示）※ 引数 true で強制更新を指示 -->
-        <button class="bar-btn" id="btnSyncPull" onclick="pullFromSupabase(true)">
+        <!-- 6-alt. 更新ボタン（PC時のみ表示） -->
+        <button class="bar-btn" id="btnSyncPull" onclick="forceSyncNow()">
             <span class="bar-btn-icon" id="btnSyncPullIcon">🔄</span>
             <span id="btnSyncPullLabel">更新</span>
         </button>
@@ -868,6 +865,15 @@
                     <div id="supabaseAuthStatus" style="font-size: 11.5px; margin-top: 6px; font-weight: bold; color: var(--text-secondary);">未ログイン</div>
                 </div>
 
+                <div class="settings-card-box" id="supabaseSyncStatusBox">
+                    <div class="settings-card-title">🔄 同期状態</div>
+                    <div id="supabaseSyncStatus" style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: var(--text-secondary);">未設定</div>
+                    <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 8px;">
+                        入力内容は通信状況に関わらず必ず本体（この端末）に保存されます。クラウドへの送信はオンライン時に自動で行われ、送れなかった分はオンライン復帰時・アプリ復帰時・約20秒毎の再試行で自動的に再送されます。今すぐ確実に送受信したい場合は下のボタンを押してください。
+                    </div>
+                    <button type="button" class="data-action-btn primary-btn" onclick="forceSyncNow()">今すぐ同期</button>
+                </div>
+
                 <div class="settings-card-box" id="supabaseSetupBox" style="display: none;">
                     <div class="settings-card-title">🛠️ データベースセットアップ (初回のみ)</div>
                     <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
@@ -961,9 +967,8 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
     <script>
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
-                // UI上でのフィードバックを含めた強制Pullを実行
-                if (typeof pullFromSupabase === 'function') {
-                    pullFromSupabase(true);
+                if (typeof checkSupabaseAuth === 'function') {
+                    checkSupabaseAuth(); // 認証状態を確認し、自動でpullFromSupabase()が実行されます
                 }
             }
         });
