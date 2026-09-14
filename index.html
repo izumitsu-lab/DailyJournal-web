@@ -18,6 +18,23 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <link rel="stylesheet" href="style.css">
+
+    <!-- PC/スマホでのボタン切り替え用スタイル -->
+    <style>
+        /* デフォルト (PCモード) : カレンダー非表示、更新表示 */
+        #btnCalendarLink { display: none !important; }
+        #btnSyncPull { display: flex; } 
+
+        /* スマホモード時 : カレンダー表示、更新非表示 */
+        body.is-mobile-mode #btnCalendarLink { display: flex !important; }
+        body.is-mobile-mode #btnSyncPull { display: none !important; }
+
+        /* 画面幅による自動判定時 */
+        @media (max-width: 768px) {
+            body:not(.is-desktop-mode) #btnCalendarLink { display: flex !important; }
+            body:not(.is-desktop-mode) #btnSyncPull { display: none !important; }
+        }
+    </style>
 </head>
 <body>
 
@@ -127,10 +144,16 @@
             <span id="btnTodayListLabel">今日</span>
         </button>
 
-        <!-- 6. カレンダー／リンク（スマホ時は全画面ポップアップ起動） -->
+        <!-- 6. カレンダー／リンク（スマホ時は全画面ポップアップ起動、PC時は非表示） -->
         <button class="bar-btn" id="btnCalendarLink" onclick="handleCalendarLinkButtonClick()">
             <span class="bar-btn-icon" id="btnCalendarLinkIcon">📅</span>
             <span id="btnCalendarLinkLabel">カレンダー</span>
+        </button>
+
+        <!-- 6-alt. 更新ボタン（PC時のみ表示） -->
+        <button class="bar-btn" id="btnSyncPull" onclick="pullFromSupabase()">
+            <span class="bar-btn-icon" id="btnSyncPullIcon">🔄</span>
+            <span id="btnSyncPullLabel">更新</span>
         </button>
 
         <!-- 7. 設定 -->
@@ -930,5 +953,16 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
     <script src="supabase-sync.js"></script>
+
+    <!-- アプリのバックグラウンド復帰時に自動で同期するための処理 -->
+    <script>
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                if (typeof checkSupabaseAuth === 'function') {
+                    checkSupabaseAuth(); // 認証状態を確認し、自動でpullFromSupabase()が実行されます
+                }
+            }
+        });
+    </script>
 </body>
 </html>
