@@ -1,5 +1,5 @@
 // ==========================================
-// supabase-sync.js (Supabase 連携・ローカルBase64完全保護版)
+// supabase-sync.js (Supabase 連携・ローカル完全保護＆自動復元ツール)
 // ==========================================
 
 let supabaseClient = null;
@@ -75,6 +75,9 @@ async function checkSupabaseAuth() {
         statusEl.textContent = `ログイン中: ${supabaseUser.email}`;
         statusEl.style.color = "var(--notebook-color)";
         logoutBtn.style.display = "inline-flex";
+        
+        // ★ログイン確認後、まずローカルデータの破壊（URL化）を検知して完全復元する
+        await recoverLocalImages();
         pullFromSupabase();
     } else {
         supabaseUser = null;
@@ -120,7 +123,7 @@ async function signOutSupabase() {
 }
 
 // ==========================================
-// 3. Storage画像アップロード＆ダウンロード
+// 3. Storage画像アップロード ＆ ダウンロード(完全復元用)
 // ==========================================
 
 async function uploadImageToSupabase(base64Str) {
@@ -143,26 +146,108 @@ async function uploadImageToSupabase(base64Str) {
     }
 }
 
-// 追加：クラウドのURL画像をローカル用にBase64（実データ）に変換する
+// ★クラウドのURLから実データ(Base64)を強制ダウンロードして復元する関数
 async function downloadImageToBase64(url) {
     if (!url || !url.startsWith('http')) return url;
     try {
-        const res = await fetch(url);
-        const blob = await res.blob();
+        // SupabaseのStorageから直接安全にダウンロードする
+        const urlParts = url.split('/images/');
+        if (urlParts.length < 2) return url;
+        const filePath = urlParts[1];
+
+        const { data, error } = await supabaseClient.storage.from('images').download(filePath);
+        if (error) throw error;
+
         return await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result);
             reader.onerror = reject;
-            reader.readAsDataURL(blob);
+            reader.readAsDataURL(data); // 実体データ(Blob)をBase64に完全変換
         });
     } catch (e) {
-        console.error("画像のダウンロード・変換失敗:", e);
+        console.error("画像の復元に失敗しました:", e);
         return url; 
     }
 }
 
 // ==========================================
-// 4. ブラウザ・ストレージの直接監視 (フック)
+// 4. 【最重要】失われたローカル画像の自動復元処理
+// ==========================================
+async function recoverLocalImages() {
+    if (!supabaseClient || !supabaseUser) return;
+    let recoveredCount = 0;
+    let needSaveJournal = false;
+    let needSaveNotebook = false;
+
+    console.log("ローカルデータの破損（URL化）を検査・復元しています...");
+
+    // 1. ジャーナルの復元
+    const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
+    if (jData) {
+        for (const dateStr of Object.keys(jData)) {
+            for (const log of jData[dateStr]) {
+                if (log.images && log.images.length > 0) {
+                    for (let i = 0; i < log.images.length; i++) {
+                        if (log.images[i].startsWith('http')) {
+                            log.images[i] = await downloadImageToBase64(log.images[i]);
+                            recoveredCount++;
+                            needSaveJournal = true;
+                        }
+                    }
+                }
+                if (log.image && log.image.startsWith('http')) {
+                    log.image = await downloadImageToBase64(log.image);
+                    recoveredCount++;
+                    needSaveJournal = true;
+                }
+            }
+        }
+    }
+
+    // 2. ノートブックの復元
+    const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
+    if (nData) {
+        for (const note of nData) {
+            if (note.content && note.content.includes('http')) {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = note.content;
+                const imgs = tempDiv.querySelectorAll('img[src^="http"]');
+                let noteRecovered = false;
+                for (let img of imgs) {
+                    if (img.src.includes('/storage/v1/object/public/images/')) {
+                        const b64 = await downloadImageToBase64(img.src);
+                        if (b64 && b64 !== img.src) {
+                            img.src = b64;
+                            recoveredCount++;
+                            noteRecovered = true;
+                        }
+                    }
+                }
+                if (noteRecovered) {
+                    note.content = tempDiv.innerHTML;
+                    needSaveNotebook = true;
+                }
+            }
+        }
+    }
+
+    // 復元されたデータをローカル（本体）に完全に保存し直す
+    if (needSaveJournal && typeof window._originalSetDBData === 'function') {
+        await window._originalSetDBData('journalData', jData);
+    }
+    if (needSaveNotebook && typeof window._originalSetDBData === 'function') {
+        await window._originalSetDBData('notebookData', nData);
+    }
+
+    if (recoveredCount > 0) {
+        console.log(`[完全復元成功] ${recoveredCount}枚の画像をローカルの実体データ(Base64)に戻しました。`);
+        alert(`【自動修復完了】\n${recoveredCount}枚の画像をクラウドから再ダウンロードし、ローカルに完全復元しました。これでJSONエクスポートにも画像が含まれます。`);
+        if (typeof renderRightCards === 'function') renderRightCards();
+    }
+}
+
+// ==========================================
+// 5. ブラウザ・ストレージの直接監視 (フック)
 // ==========================================
 
 const _originalSetItem = localStorage.setItem;
@@ -182,16 +267,21 @@ function hookCoreStorage() {
 
     if (_originalSetDBData) {
         window.setDBData = function(key, value) {
-            // ★ローカルのデータ（Base64の画像を含む）をそのまま本体に保存
+            // ★ローカルのデータ（Base64）はそのまま触らずに本体に保存する
             const promise = _originalSetDBData(key, value); 
             
+            // クラウド送信処理へ
             if (supabaseClient && supabaseUser && !isPulling) {
                 if (key === 'journalData') {
                     clearTimeout(journalPushTimer);
-                    journalPushTimer = setTimeout(() => pushJournalsToSupabase(value), 800);
+                    // ★本体のデータを守るため、通信用の「コピー」を作成して渡す
+                    const payloadCopy = JSON.parse(JSON.stringify(value));
+                    journalPushTimer = setTimeout(() => pushJournalsToSupabase(payloadCopy), 800);
                 } else if (key === 'notebookData') {
                     clearTimeout(notebookPushTimer);
-                    notebookPushTimer = setTimeout(() => pushNotebooksToSupabase(value), 800);
+                    // ★本体のデータを守るため、通信用の「コピー」を作成して渡す
+                    const payloadCopy = JSON.parse(JSON.stringify(value));
+                    notebookPushTimer = setTimeout(() => pushNotebooksToSupabase(payloadCopy), 800);
                 }
             }
             return promise;
@@ -200,7 +290,7 @@ function hookCoreStorage() {
 }
 
 // ==========================================
-// 5. データ送信 (Push) 処理
+// 6. データ送信 (Push) 処理
 // ==========================================
 
 async function pushSettingsToSupabase() {
@@ -216,23 +306,19 @@ async function pushSettingsToSupabase() {
             updated_at: new Date().toISOString()
         };
         await supabaseClient.from('app_settings').upsert(payload);
-    } catch (e) {
-        console.error("設定送信エラー:", e);
-    }
+    } catch (e) {}
 }
 
-async function pushJournalsToSupabase(jData) {
+async function pushJournalsToSupabase(cloudJData) {
     try {
         const payload = [];
 
-        for (const dateStr of Object.keys(jData)) {
-            const currentJson = JSON.stringify(jData[dateStr]);
+        for (const dateStr of Object.keys(cloudJData)) {
+            const currentJson = JSON.stringify(cloudJData[dateStr]);
             if (currentJson !== lastSyncedJournals[dateStr]) {
-                // ★本体のデータは守るため、クラウド送信用のコピーを作る
-                const cloudLogData = JSON.parse(currentJson);
                 
-                // コピー側だけをURLに変換する
-                for (const log of cloudLogData) {
+                // コピーデータ側だけをURLに変換する（本体データは一切無傷）
+                for (const log of cloudJData[dateStr]) {
                     if (log.images && log.images.length > 0) {
                         for (let i = 0; i < log.images.length; i++) {
                             if (log.images[i].startsWith('data:image')) {
@@ -248,11 +334,10 @@ async function pushJournalsToSupabase(jData) {
                 payload.push({
                     date_str: dateStr,
                     user_id: supabaseUser.id,
-                    log_data: cloudLogData,
+                    log_data: cloudJData[dateStr],
                     updated_at: new Date().toISOString()
                 });
                 
-                // キャッシュには「本体のBase64の状態」を記録しておく
                 lastSyncedJournals[dateStr] = currentJson;
             }
         }
@@ -264,21 +349,18 @@ async function pushJournalsToSupabase(jData) {
                 payload.forEach(p => delete lastSyncedJournals[p.date_str]); 
             }
         }
-    } catch (e) {
-        console.error("Journals同期中にエラー:", e);
-    }
+    } catch (e) {}
 }
 
-async function pushNotebooksToSupabase(nData) {
+async function pushNotebooksToSupabase(cloudNData) {
     try {
         const payload = [];
 
-        for (const note of nData) {
-            const currentJson = JSON.stringify(note);
-            if (currentJson !== lastSyncedNotebooks[note.id]) {
-                // ★本体のデータは守るため、クラウド送信用のコピーを作る
-                const cloudNote = JSON.parse(currentJson);
+        for (const cloudNote of cloudNData) {
+            const currentJson = JSON.stringify(cloudNote);
+            if (currentJson !== lastSyncedNotebooks[cloudNote.id]) {
                 
+                // コピーデータ側だけをURLに変換する（本体データは一切無傷）
                 if (cloudNote.content && cloudNote.content.includes('data:image')) {
                     const tempDiv = document.createElement('div');
                     tempDiv.innerHTML = cloudNote.content;
@@ -306,7 +388,7 @@ async function pushNotebooksToSupabase(nData) {
                     created_at: safeCreatedAt,
                     updated_at: safeUpdatedAt
                 });
-                lastSyncedNotebooks[note.id] = currentJson; 
+                lastSyncedNotebooks[cloudNote.id] = currentJson; 
             }
         }
 
@@ -317,13 +399,11 @@ async function pushNotebooksToSupabase(nData) {
                 payload.forEach(p => delete lastSyncedNotebooks[p.id]); 
             }
         }
-    } catch (e) {
-        console.error("Notebooks同期中にエラー:", e);
-    }
+    } catch (e) {}
 }
 
 // ==========================================
-// 6. クラウドからのデータ取得 (Pull)
+// 7. クラウドからのデータ取得 (Pull) と 本体の保護
 // ==========================================
 
 async function pullFromSupabase() {
@@ -362,9 +442,11 @@ async function pullFromSupabase() {
         // --- 2. Journals の取得 ---
         const { data: jDb } = await supabaseClient.from('journals').select('*');
         if (jDb && jDb.length > 0) {
+            const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
             let updated = false;
+
             for (const row of jDb) {
-                const localLogs = journalData[row.date_str] || [];
+                const localLogs = jData[row.date_str] || [];
                 if (localLogs.length > row.log_data.length) continue; 
                 
                 const downloadedLogs = row.log_data;
@@ -382,24 +464,26 @@ async function pullFromSupabase() {
                     }
                 }
 
-                journalData[row.date_str] = downloadedLogs;
+                jData[row.date_str] = downloadedLogs;
                 lastSyncedJournals[row.date_str] = JSON.stringify(downloadedLogs); 
                 if (typeof dateList !== 'undefined' && !dateList.includes(row.date_str)) dateList.push(row.date_str);
                 updated = true;
             }
             if (updated) {
                 if (typeof dateList !== 'undefined') dateList.sort();
-                await _originalSetDBData('journalData', journalData);
+                await _originalSetDBData('journalData', jData);
             }
         }
 
         // --- 3. Notebooks の取得 ---
         const { data: nDb } = await supabaseClient.from('notebooks').select('*');
         if (nDb && nDb.length > 0) {
+            const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
             let updated = false;
+
             for (const row of nDb) {
-                const idx = notebookData.findIndex(n => n.id === row.id);
-                if (idx !== -1 && new Date(notebookData[idx].updatedAt) >= new Date(row.updated_at)) continue;
+                const idx = nData.findIndex(n => n.id === row.id);
+                if (idx !== -1 && new Date(nData[idx].updatedAt) >= new Date(row.updated_at)) continue;
 
                 let content = row.content;
                 // ★クラウドから来たURL画像を、すべて実データ（Base64）にダウンロードしてから本体にしまう
@@ -408,9 +492,11 @@ async function pullFromSupabase() {
                     tempDiv.innerHTML = content;
                     const imgs = tempDiv.querySelectorAll('img[src^="http"]');
                     for (let img of imgs) {
-                        const b64 = await downloadImageToBase64(img.src);
-                        if (b64 && b64 !== img.src) {
-                            img.src = b64;
+                        if (img.src.includes('/storage/v1/object/public/images/')) {
+                            const b64 = await downloadImageToBase64(img.src);
+                            if (b64 && b64 !== img.src) {
+                                img.src = b64;
+                            }
                         }
                     }
                     content = tempDiv.innerHTML;
@@ -422,14 +508,14 @@ async function pullFromSupabase() {
                     createdAt: row.created_at, updatedAt: row.updated_at
                 };
 
-                if (idx !== -1) notebookData[idx] = noteObj;
-                else notebookData.push(noteObj);
+                if (idx !== -1) nData[idx] = noteObj;
+                else nData.push(noteObj);
 
                 lastSyncedNotebooks[row.id] = JSON.stringify(noteObj);
                 updated = true;
             }
             if (updated) {
-                await _originalSetDBData('notebookData', notebookData);
+                await _originalSetDBData('notebookData', nData);
             }
         }
 
