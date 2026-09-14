@@ -1741,3 +1741,53 @@ body.is-mobile-mode,
         padding: 13px;
     }
 }
+
+/* =========================================
+   Sync Animation & Global Toast
+   ========================================= */
+@keyframes syncSpin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+.icon-spin {
+    animation: syncSpin 1.2s linear infinite;
+    display: inline-block;
+}
+.sync-active {
+    color: var(--accent-color) !important;
+}
+.sync-success {
+    color: var(--notebook-color) !important;
+}
+.sync-error {
+    color: var(--reset-btn-bg) !important;
+}
+
+.global-toast {
+    position: fixed;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    left: 50%;
+    transform: translateX(-50%) translateY(-150%);
+    background: var(--modal-bg);
+    border: 1px solid var(--modal-border);
+    color: var(--text-primary);
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 700;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    z-index: 9999;
+    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s;
+    opacity: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+}
+.global-toast.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}
+body.light-theme .global-toast {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+}

@@ -38,6 +38,9 @@
 </head>
 <body>
 
+    <!-- グローバルトースト通知（同期状態などの表示用） -->
+    <div id="globalToast" class="global-toast"></div>
+
     <!-- メインビュー -->
     <div class="views-container">
         <!-- サイドバー (幅230px) -->
@@ -150,8 +153,8 @@
             <span id="btnCalendarLinkLabel">カレンダー</span>
         </button>
 
-        <!-- 6-alt. 更新ボタン（PC時のみ表示） -->
-        <button class="bar-btn" id="btnSyncPull" onclick="pullFromSupabase()">
+        <!-- 6-alt. 更新ボタン（PC時のみ表示）※ 引数 true で強制更新を指示 -->
+        <button class="bar-btn" id="btnSyncPull" onclick="pullFromSupabase(true)">
             <span class="bar-btn-icon" id="btnSyncPullIcon">🔄</span>
             <span id="btnSyncPullLabel">更新</span>
         </button>
@@ -958,8 +961,9 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
     <script>
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
-                if (typeof checkSupabaseAuth === 'function') {
-                    checkSupabaseAuth(); // 認証状態を確認し、自動でpullFromSupabase()が実行されます
+                // UI上でのフィードバックを含めた強制Pullを実行
+                if (typeof pullFromSupabase === 'function') {
+                    pullFromSupabase(true);
                 }
             }
         });
