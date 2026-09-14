@@ -13,6 +13,8 @@
     <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
 
+    <!-- Supabase JS SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <link rel="stylesheet" href="style.css">
@@ -678,6 +680,11 @@
                     <span class="settings-nav-icon">💾</span>
                     <span>データ</span>
                 </button>
+                <!-- ☁️ 追加: クラウド（Supabase）タブ -->
+                <button type="button" class="settings-nav-btn" id="tabBtnCloud" onclick="switchSettingsTab('cloud')">
+                    <span class="settings-nav-icon">☁️</span>
+                    <span>クラウド</span>
+                </button>
             </div>
 
             <!-- 基本設定 -->
@@ -811,6 +818,51 @@
                 <input type="file" id="importFile" style="display: none;" accept=".json" onchange="importData(event)">
             </div>
 
+            <!-- ☁️ 追加: クラウド設定（Supabase連携） -->
+            <div class="settings-page" id="settingsPageCloud">
+                <div class="settings-card-box">
+                    <div class="settings-card-title">🔗 Supabase 接続設定</div>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
+                        ※GitHub等に公開しても安全なように、URLとキーはブラウザにのみ保存されます。
+                    </div>
+                    <input type="text" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL">
+                    <input type="password" class="settings-text-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;">
+                    <button type="button" class="data-action-btn primary-btn" style="margin-top: 8px;" onclick="saveSupabaseConfig()">接続設定を保存</button>
+                </div>
+
+                <div class="settings-card-box" id="supabaseAuthBox" style="display: none;">
+                    <div class="settings-card-title">👤 アカウント認証</div>
+                    <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス">
+                    <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" style="margin-top: 6px;">
+                    <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        <button type="button" class="data-action-btn" onclick="signUpSupabase()">新規登録</button>
+                        <button type="button" class="data-action-btn primary-btn" onclick="signInSupabase()">ログイン</button>
+                    </div>
+                    <button type="button" class="data-action-btn danger-btn" id="supabaseLogoutBtn" style="margin-top: 8px; display: none;" onclick="signOutSupabase()">ログアウト</button>
+                    <div id="supabaseAuthStatus" style="font-size: 11.5px; margin-top: 6px; font-weight: bold; color: var(--text-secondary);">未ログイン</div>
+                </div>
+
+                <div class="settings-card-box" id="supabaseSetupBox" style="display: none;">
+                    <div class="settings-card-title">🛠️ データベースセットアップ (初回のみ)</div>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
+                        セキュリティ（RLS）のため、Supabaseの「SQL Editor」に以下を貼り付けて実行し、テーブルを作成してください。
+                    </div>
+                    <textarea class="settings-text-input" id="supabaseSqlText" readonly style="height: 140px; font-family: monospace; font-size: 10px; background: rgba(0,0,0,0.2);">
+-- 1. テーブル作成
+CREATE TABLE journals ( date_str TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, log_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (date_str, user_id) );
+CREATE TABLE notebooks ( id TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, title TEXT, content TEXT, category TEXT, status TEXT, linked_note_ids JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, PRIMARY KEY (id, user_id) );
+-- 2. RLS有効化 (セキュリティ設定)
+ALTER TABLE journals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "User can manage their own journals" ON journals FOR ALL USING (auth.uid() = user_id);
+ALTER TABLE notebooks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "User can manage their own notebooks" ON notebooks FOR ALL USING (auth.uid() = user_id);
+-- 3. Storage バケット作成
+INSERT INTO storage.buckets (id, name, public) VALUES ('images', 'images', false);
+CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USING (bucket_id = 'images' AND auth.uid() = owner);
+                    </textarea>
+                </div>
+            </div>
+
             <button class="modal-btn submit" style="margin-top: 6px;" onclick="closeModal('settingsModal')">閉じる</button>
         </div>
     </div>
@@ -875,5 +927,8 @@
     <script src="calendar.js"></script>
     <script src="notebooks.js"></script>
     <script src="ui.js"></script>
+    
+    <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
+    <script src="supabase-sync.js"></script>
 </body>
 </html>

@@ -369,7 +369,8 @@ function updateCategoryButtonUI() {
 }
 
 function switchSettingsTab(t) {
-    ['general', 'types', 'categories', 'data'].forEach(p => {
+    // ★ 'cloud' タブを配列に追加しました
+    ['general', 'types', 'categories', 'data', 'cloud'].forEach(p => {
         const b = document.getElementById('tabBtn' + p.charAt(0).toUpperCase() + p.slice(1));
         const e = document.getElementById('settingsPage' + p.charAt(0).toUpperCase() + p.slice(1));
         if (b) b.classList.toggle('active', p === t); 
