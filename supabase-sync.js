@@ -43,7 +43,6 @@ function initSupabase(url, key) {
         hookIntoAppSave(); 
     } catch (err) {
         console.error("Supabase クライアントの初期化に失敗しました:", err);
-        alert("SupabaseのURLかKeyが正しくありません。");
     }
 }
 
@@ -170,57 +169,56 @@ async function uploadImageToSupabase(base64Str) {
 // ==========================================
 
 function hookIntoAppSave() {
-    if (window.saveJournalData && !window._originalSaveJournalData) {
-        window._originalSaveJournalData = window.saveJournalData;
+    if (typeof saveJournalData === 'function' && !window._originalSaveJournalData) {
+        window._originalSaveJournalData = saveJournalData;
         
-        window.saveJournalData = async function() {
+        // 元の関数を上書き
+        saveJournalData = async function() {
             if (supabaseClient && supabaseUser && !isSyncing) {
                 isSyncing = true;
                 try {
                     const payload = [];
 
-                    for (const dateStr of Object.keys(window.journalData)) {
-                        let isModified = false;
-
-                        // 画像のURL化処理
-                        for (const log of window.journalData[dateStr]) {
+                    // window.journalData ではなく直接 journalData にアクセス
+                    for (const dateStr of Object.keys(journalData)) {
+                        for (const log of journalData[dateStr]) {
                             if (log.images && log.images.length > 0) {
                                 for (let i = 0; i < log.images.length; i++) {
                                     if (log.images[i].startsWith('data:image')) {
                                         log.images[i] = await uploadImageToSupabase(log.images[i]);
-                                        isModified = true;
                                     }
                                 }
                             }
                             if (log.image && log.image.startsWith('data:image')) {
                                 log.image = await uploadImageToSupabase(log.image);
-                                isModified = true;
                             }
                         }
 
-                        // 差分チェック (文字の変更や画像の変換があったか)
-                        const currentJson = JSON.stringify(window.journalData[dateStr]);
+                        // 差分チェック
+                        const currentJson = JSON.stringify(journalData[dateStr]);
                         if (currentJson !== lastSyncedJournals[dateStr]) {
                             payload.push({
                                 date_str: dateStr,
                                 user_id: supabaseUser.id,
-                                log_data: window.journalData[dateStr],
+                                log_data: journalData[dateStr],
                                 updated_at: new Date().toISOString()
                             });
-                            // キャッシュを更新
                             lastSyncedJournals[dateStr] = currentJson;
                         }
                     }
 
+                    // まず絶対にローカル(IndexedDB)に保存する
                     await window._originalSaveJournalData();
 
-                    // 変更があった日付のデータだけを送信
+                    // 変更があった日付のデータだけをSupabaseに送信
                     if (payload.length > 0) {
                         const { error } = await supabaseClient.from('journals').upsert(payload);
                         if (error) console.error("Journals同期エラー:", error);
                     }
                 } catch (e) {
                     console.error("クラウドへのJournal保存中にエラーが発生:", e);
+                    // エラーが起きても絶対にローカル保存をやり直してデータを守る
+                    await window._originalSaveJournalData();
                 } finally {
                     isSyncing = false;
                 }
@@ -230,17 +228,17 @@ function hookIntoAppSave() {
         };
     }
 
-    if (window.saveNotebookData && !window._originalSaveNotebookData) {
-        window._originalSaveNotebookData = window.saveNotebookData;
+    if (typeof saveNotebookData === 'function' && !window._originalSaveNotebookData) {
+        window._originalSaveNotebookData = saveNotebookData;
         
-        window.saveNotebookData = async function() {
+        // 元の関数を上書き
+        saveNotebookData = async function() {
             if (supabaseClient && supabaseUser && !isSyncing) {
                 isSyncing = true;
                 try {
                     const payload = [];
 
-                    for (const note of window.notebookData) {
-                        // Notebook内のBase64画像をStorageへ
+                    for (const note of notebookData) {
                         if (note.content && note.content.includes('data:image')) {
                             const tempDiv = document.createElement('div');
                             tempDiv.innerHTML = note.content;
@@ -267,20 +265,21 @@ function hookIntoAppSave() {
                                 created_at: note.createdAt,
                                 updated_at: note.updatedAt || new Date().toISOString()
                             });
-                            // キャッシュを更新
                             lastSyncedNotebooks[note.id] = currentJson;
                         }
                     }
 
+                    // ローカル保存
                     await window._originalSaveNotebookData();
 
-                    // 変更があったノートだけを送信
+                    // 変更があったノートだけ送信
                     if (payload.length > 0) {
                         const { error } = await supabaseClient.from('notebooks').upsert(payload);
                         if (error) console.error("Notebooks同期エラー:", error);
                     }
                 } catch (e) {
                     console.error("クラウドへのNotebook保存中にエラーが発生:", e);
+                    await window._originalSaveNotebookData();
                 } finally {
                     isSyncing = false;
                 }
@@ -302,31 +301,33 @@ async function pullFromSupabase() {
     try {
         console.log("クラウドからデータを同期中...");
 
-        // 1. Journals の取得とキャッシュ更新
+        // 1. Journals の取得
         const { data: journalsDb, error: jError } = await supabaseClient
             .from('journals')
             .select('*');
             
         if (!jError && journalsDb && journalsDb.length > 0) {
             journalsDb.forEach(row => {
-                window.journalData[row.date_str] = row.log_data;
-                lastSyncedJournals[row.date_str] = JSON.stringify(row.log_data); // キャッシュ保存
+                journalData[row.date_str] = row.log_data;
+                lastSyncedJournals[row.date_str] = JSON.stringify(row.log_data); // キャッシュ
                 
-                if (!window.dateList.includes(row.date_str)) {
-                    window.dateList.push(row.date_str);
+                if (!dateList.includes(row.date_str)) {
+                    dateList.push(row.date_str);
                 }
             });
-            window.dateList.sort();
+            dateList.sort();
             await window._originalSaveJournalData();
         }
 
-        // 2. Notebooks の取得とキャッシュ更新
+        // 2. Notebooks の取得
         const { data: notebooksDb, error: nError } = await supabaseClient
             .from('notebooks')
             .select('*');
 
         if (!nError && notebooksDb && notebooksDb.length > 0) {
-            window.notebookData = notebooksDb.map(row => {
+            // 配列の中身を安全にクリアして入れ直す
+            notebookData.length = 0;
+            notebooksDb.forEach(row => {
                 const noteObj = {
                     id: row.id,
                     title: row.title,
@@ -337,18 +338,18 @@ async function pullFromSupabase() {
                     createdAt: row.created_at,
                     updatedAt: row.updated_at
                 };
-                lastSyncedNotebooks[row.id] = JSON.stringify(noteObj); // キャッシュ保存
-                return noteObj;
+                lastSyncedNotebooks[row.id] = JSON.stringify(noteObj);
+                notebookData.push(noteObj);
             });
             await window._originalSaveNotebookData();
         }
 
         // 3. UIの再描画
-        if (typeof window.renderRightCards === 'function') {
-            window.renderRightCards();
+        if (typeof renderRightCards === 'function') {
+            renderRightCards();
         }
-        if (typeof window.renderMiniCalendar === 'function' && window.sidebarMode === 'cal' && window.calendarScope !== 'notebooks') {
-            window.renderMiniCalendar();
+        if (typeof renderMiniCalendar === 'function' && sidebarMode === 'cal' && calendarScope !== 'notebooks') {
+            renderMiniCalendar();
         }
 
         console.log("クラウド同期が完了しました。");
