@@ -708,6 +708,11 @@
                     <span class="settings-nav-icon">☁️</span>
                     <span>クラウド</span>
                 </button>
+                <!-- 🔄 追加: 同期状態タブ（クラウド設定から独立） -->
+                <button type="button" class="settings-nav-btn" id="tabBtnSync" onclick="switchSettingsTab('sync')">
+                    <span class="settings-nav-icon">🔄</span>
+                    <span>同期</span>
+                </button>
             </div>
 
             <!-- 基本設定 -->
@@ -865,6 +870,35 @@
                     <div id="supabaseAuthStatus" style="font-size: 11.5px; margin-top: 6px; font-weight: bold; color: var(--text-secondary);">未ログイン</div>
                 </div>
 
+                <div class="settings-card-box" id="supabaseSetupBox" style="display: none;">
+                    <div class="settings-card-title">🛠️ データベースセットアップ (初回のみ)</div>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
+                        セキュリティ（RLS）のため、Supabaseの「SQL Editor」に以下を貼り付けて実行し、テーブルを作成してください。
+                    </div>
+                    <div style="font-size: 11.5px; color: #e67e22; font-weight: bold; margin-bottom: 8px;">
+                        ⚠️ 以前このアプリを設定済みの方へ：カテゴリ／タイプ等の設定を同期する app_settings テーブルが今回追加されました。既存の環境では下記SQLを再度実行してテーブルを追加してください（journals / notebooks は既にある場合、そのままで問題ありません）。
+                    </div>
+                    <textarea class="settings-text-input" id="supabaseSqlText" readonly style="height: 170px; font-family: monospace; font-size: 10px; background: rgba(0,0,0,0.2);">
+-- 1. テーブル作成
+CREATE TABLE journals ( date_str TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, log_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (date_str, user_id) );
+CREATE TABLE notebooks ( id TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, title TEXT, content TEXT, category TEXT, status TEXT, linked_note_ids JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, PRIMARY KEY (id, user_id) );
+CREATE TABLE app_settings ( user_id UUID PRIMARY KEY REFERENCES auth.users NOT NULL, settings_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW() );
+-- 2. RLS有効化 (セキュリティ設定)
+ALTER TABLE journals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "User can manage their own journals" ON journals FOR ALL USING (auth.uid() = user_id);
+ALTER TABLE notebooks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "User can manage their own notebooks" ON notebooks FOR ALL USING (auth.uid() = user_id);
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "User can manage their own settings" ON app_settings FOR ALL USING (auth.uid() = user_id);
+-- 3. Storage バケット作成
+INSERT INTO storage.buckets (id, name, public) VALUES ('images', 'images', false);
+CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USING (bucket_id = 'images' AND auth.uid() = owner);
+                    </textarea>
+                </div>
+            </div>
+
+            <!-- ☁️ 追加: 同期状態タブ（クラウド設定とは独立） -->
+            <div class="settings-page" id="settingsPageSync">
                 <div class="settings-card-box" id="supabaseSyncStatusBox">
                     <div class="settings-card-title">🔄 同期状態</div>
                     <div id="supabaseSyncStatus" style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: var(--text-secondary);">未設定</div>
@@ -872,26 +906,6 @@
                         入力内容は通信状況に関わらず必ず本体（この端末）に保存されます。クラウドへの送信はオンライン時に自動で行われ、送れなかった分はオンライン復帰時・アプリ復帰時・約20秒毎の再試行で自動的に再送されます。今すぐ確実に送受信したい場合は下のボタンを押してください。
                     </div>
                     <button type="button" class="data-action-btn primary-btn" onclick="forceSyncNow()">今すぐ同期</button>
-                </div>
-
-                <div class="settings-card-box" id="supabaseSetupBox" style="display: none;">
-                    <div class="settings-card-title">🛠️ データベースセットアップ (初回のみ)</div>
-                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
-                        セキュリティ（RLS）のため、Supabaseの「SQL Editor」に以下を貼り付けて実行し、テーブルを作成してください。
-                    </div>
-                    <textarea class="settings-text-input" id="supabaseSqlText" readonly style="height: 140px; font-family: monospace; font-size: 10px; background: rgba(0,0,0,0.2);">
--- 1. テーブル作成
-CREATE TABLE journals ( date_str TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, log_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (date_str, user_id) );
-CREATE TABLE notebooks ( id TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, title TEXT, content TEXT, category TEXT, status TEXT, linked_note_ids JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, PRIMARY KEY (id, user_id) );
--- 2. RLS有効化 (セキュリティ設定)
-ALTER TABLE journals ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "User can manage their own journals" ON journals FOR ALL USING (auth.uid() = user_id);
-ALTER TABLE notebooks ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "User can manage their own notebooks" ON notebooks FOR ALL USING (auth.uid() = user_id);
--- 3. Storage バケット作成
-INSERT INTO storage.buckets (id, name, public) VALUES ('images', 'images', false);
-CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USING (bucket_id = 'images' AND auth.uid() = owner);
-                    </textarea>
                 </div>
             </div>
 
