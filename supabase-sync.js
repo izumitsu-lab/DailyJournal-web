@@ -103,6 +103,8 @@ function initSupabase(url, key) {
         supabaseClient = window.supabase.createClient(url, key);
         document.getElementById('supabaseAuthBox').style.display = 'block';
         document.getElementById('supabaseSetupBox').style.display = 'block';
+        const migrateBox = document.getElementById('supabaseMigrateBox');
+        if (migrateBox) migrateBox.style.display = 'block';
         checkSupabaseAuth();
         hookCoreStorage();
         setupNetworkAndLifecycleListeners();
@@ -244,7 +246,11 @@ async function getHash(str) {
     return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// アップロード（重複時は通信をスキップして即URLを返す）
+// 画像ストレージ参照の目印。DBにはURLではなく、この接頭辞+Storage内パスだけを保存する
+// （バケットは非公開なので「公開URL」は使わない。表示・復元のたびに署名付きURLを発行する）
+const SB_IMG_PREFIX = 'SBIMG:';
+
+// アップロード（重複時は通信をスキップして即参照パスを返す）
 async function uploadImageToSupabase(base64Str) {
     if (!base64Str || !base64Str.startsWith('data:image')) return base64Str;
     try {
@@ -253,26 +259,46 @@ async function uploadImageToSupabase(base64Str) {
         const fileName = `img_${hash}.${ext}`;
         const filePath = `${supabaseUser.id}/${fileName}`;
 
-        const { data: publicUrlData } = supabaseClient.storage.from('images').getPublicUrl(filePath);
-
         // 同一ファイル名（ハッシュ）でアップロードを試みる
         const res = await fetch(base64Str);
         const blob = await res.blob();
         const { error } = await supabaseClient.storage.from('images').upload(filePath, blob, { upsert: false });
 
-        // エラーが出ても「既に存在する(Duplicate)」なら正常なのでそのままURLを返す
+        // エラーが出ても「既に存在する(Duplicate)」なら正常なのでそのまま参照パスを返す
         if (error && !error.message.includes('already exists') && !error.message.includes('Duplicate')) {
             throw error;
         }
 
-        return publicUrlData.publicUrl;
+        // DBには非公開Storage内の「相対パス」だけを保存（実データはBase64のままStorageに残る）
+        return SB_IMG_PREFIX + filePath;
     } catch (err) {
         console.error("画像アップロード失敗:", err);
         throw err; // 呼び出し元（push処理）に失敗を伝え、確実に再送キューに残す
     }
 }
 
-// ダウンロード（本当にローカルに無い時だけ通信する）
+// 非公開Storageから、都度その場限りの署名付きURL（有効期限付き）を発行して画像を取得する
+async function downloadImageFromStorage(ref) {
+    if (!ref) return ref;
+    const path = ref.startsWith(SB_IMG_PREFIX) ? ref.slice(SB_IMG_PREFIX.length) : ref;
+    try {
+        const { data, error } = await supabaseClient.storage.from('images').createSignedUrl(path, 3600);
+        if (error || !data || !data.signedUrl) throw error || new Error('署名付きURLを取得できませんでした');
+        const res = await fetch(data.signedUrl);
+        const blob = await res.blob();
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    } catch (e) {
+        console.error("画像ダウンロード失敗:", e);
+        return ref; // 失敗時は参照のまま返す（次回同期時に再試行される）
+    }
+}
+
+// 旧バージョン（バケットが公開だった場合）の互換用。通常は使われない。
 async function downloadImageToBase64(url) {
     if (!url || !url.startsWith('http')) return url;
     try {
@@ -285,7 +311,7 @@ async function downloadImageToBase64(url) {
             reader.readAsDataURL(blob);
         });
     } catch (e) {
-        console.error("画像ダウンロード失敗:", e);
+        console.error("画像ダウンロード失敗(旧形式):", e);
         return url;
     }
 }
@@ -446,8 +472,9 @@ async function pushNotebooksToSupabase(cloudNData, force = false) {
                 tempDiv.innerHTML = cloudNote.content;
                 const imgs = tempDiv.querySelectorAll('img[src^="data:image"]');
                 for (let img of imgs) {
-                    const url = await uploadImageToSupabase(img.src);
-                    if (url && url !== img.src) img.src = url;
+                    const src = img.getAttribute('src');
+                    const ref = await uploadImageToSupabase(src);
+                    if (ref && ref !== src) img.setAttribute('src', ref);
                 }
                 cloudNote.content = tempDiv.innerHTML;
             }
@@ -527,6 +554,34 @@ async function flushPendingPush() {
 }
 
 // ==========================================
+// 5.5 既存データの再アップロード（DB肥大化の解消）
+// ==========================================
+// 以前の実装や設定ミスにより、画像がStorageへ行かずDBの行に
+// Base64のまま残ってしまっているケースを解消するための手動移行処理。
+// ローカル(IndexedDB)に残っている本来のデータを元に、現在の正しいロジックで
+// 全件を強制的に再送信し、Storageへアップロード＋DB側は参照パスのみに置き換える。
+async function migrateEmbeddedImagesToStorage() {
+    if (!supabaseClient || !supabaseUser) { alert("先にSupabaseへログインしてください。"); return; }
+    if (!confirm("ローカルに保存されている全データを元に、画像をクラウドStorageへ再アップロードし、データベースを軽量化します。データ量によっては数分かかることがあります。続行しますか？")) return;
+
+    updateSyncStatusUI();
+    try {
+        const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
+        const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
+
+        await pushJournalsToSupabase(JSON.parse(JSON.stringify(jData)), true);
+        await pushNotebooksToSupabase(JSON.parse(JSON.stringify(nData)), true);
+
+        alert("移行が完了しました。Supabaseダッシュボードの Storage と Table Editor でサイズをご確認ください。");
+    } catch (e) {
+        console.error("移行処理でエラーが発生しました:", e);
+        alert("移行中にエラーが発生しました。通信状態を確認し、時間をおいて再度お試しください。");
+    } finally {
+        updateSyncStatusUI();
+    }
+}
+
+// ==========================================
 // 6. クラウドからのデータ取得 (Pull) と 無駄ゼロ復元
 // ==========================================
 
@@ -594,25 +649,29 @@ async function mergeJournalRow(row, localImagesDict) {
     const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
     const downloadedLogs = row.log_data;
 
+    // クラウド参照（新形式:SBIMG:接頭辞 / 旧形式:http公開URL）かどうかを判定
+    const isCloudRef = (v) => typeof v === 'string' && (v.startsWith(SB_IMG_PREFIX) || v.startsWith('http'));
+    const resolveCloudRef = (v) => v.startsWith(SB_IMG_PREFIX) ? downloadImageFromStorage(v) : downloadImageToBase64(v);
+
     for (const log of downloadedLogs) {
         if (log.images && log.images.length > 0) {
             for (let i = 0; i < log.images.length; i++) {
-                if (log.images[i].startsWith('http')) {
+                if (isCloudRef(log.images[i])) {
                     const match = log.images[i].match(/img_([a-f0-9]+)\./);
                     if (match && match[1] && localImagesDict[match[1]]) {
                         log.images[i] = localImagesDict[match[1]]; // 通信回避！ローカルデータで復元
                     } else {
-                        log.images[i] = await downloadImageToBase64(log.images[i]); // 新規画像のみダウンロード
+                        log.images[i] = await resolveCloudRef(log.images[i]); // 新規画像のみダウンロード（署名付きURL経由）
                     }
                 }
             }
         }
-        if (log.image && log.image.startsWith('http')) {
+        if (isCloudRef(log.image)) {
             const match = log.image.match(/img_([a-f0-9]+)\./);
             if (match && match[1] && localImagesDict[match[1]]) {
                 log.image = localImagesDict[match[1]];
             } else {
-                log.image = await downloadImageToBase64(log.image);
+                log.image = await resolveCloudRef(log.image);
             }
         }
     }
@@ -629,17 +688,22 @@ async function mergeNotebookRow(row, localImagesDict) {
     if (idx !== -1 && new Date(nData[idx].updatedAt) >= new Date(row.updated_at)) return false;
 
     let content = row.content;
-    if (content && content.includes('http')) {
+    if (content && content.includes('<img')) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = content;
-        const imgs = tempDiv.querySelectorAll('img[src^="http"]');
+        // data:image（未アップロード分）以外の img はすべて「クラウド参照」とみなす
+        const imgs = tempDiv.querySelectorAll('img:not([src^="data:image"])');
         for (let img of imgs) {
-            const match = img.src.match(/img_([a-f0-9]+)\./);
+            const src = img.getAttribute('src') || '';
+            const match = src.match(/img_([a-f0-9]+)\./);
             if (match && match[1] && localImagesDict[match[1]]) {
-                img.src = localImagesDict[match[1]]; // 通信回避！ローカルデータで復元
-            } else if (img.src.includes('/storage/v1/object/public/images/')) {
-                const b64 = await downloadImageToBase64(img.src); // 新規画像のみダウンロード
-                if (b64) img.src = b64;
+                img.setAttribute('src', localImagesDict[match[1]]); // 通信回避！ローカルデータで復元
+            } else if (src.startsWith(SB_IMG_PREFIX)) {
+                const b64 = await downloadImageFromStorage(src); // 非公開Storageから署名付きURL経由で取得
+                if (b64) img.setAttribute('src', b64);
+            } else if (src.includes('/storage/v1/object/public/images/')) {
+                const b64 = await downloadImageToBase64(src); // 旧・公開URL形式の互換
+                if (b64) img.setAttribute('src', b64);
             }
         }
         content = tempDiv.innerHTML;
