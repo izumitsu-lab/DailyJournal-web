@@ -1035,8 +1035,40 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
                 if (targetContainer) {
                     const direction = (e.key === 'ArrowLeft') ? -1 : 1;
                     const containerWidth = targetContainer.clientWidth;
+                    
                     if (containerWidth > 0) {
                         e.preventDefault(); // デフォルトのスクロール挙動を防止
+                        
+                        // photoモード時の特別処理：カード内の写真スクローラーを優先
+                        if (typeof calendarScope !== 'undefined' && calendarScope === 'photo') {
+                            const activeIndex = Math.round(targetContainer.scrollLeft / containerWidth);
+                            const activePanel = targetContainer.querySelectorAll('.card-carousel-panel')[activeIndex];
+                            
+                            if (activePanel) {
+                                const photoScroller = activePanel.querySelector('.photo-stage-scroller');
+                                if (photoScroller) {
+                                    const pw = photoScroller.clientWidth;
+                                    const slidesCount = photoScroller.querySelectorAll('.photo-stage-slide').length;
+                                    
+                                    if (pw > 0 && slidesCount > 1) {
+                                        const currentPhotoIndex = Math.round(photoScroller.scrollLeft / pw);
+                                        
+                                        // 右キー かつ 最後の写真でない場合は写真をスワイプ
+                                        if (direction === 1 && currentPhotoIndex < slidesCount - 1) {
+                                            photoScroller.scrollBy({ left: pw, behavior: 'smooth' });
+                                            return; // カード自体の移動はキャンセル
+                                        }
+                                        // 左キー かつ 最初の写真でない場合は写真をスワイプ
+                                        if (direction === -1 && currentPhotoIndex > 0) {
+                                            photoScroller.scrollBy({ left: -pw, behavior: 'smooth' });
+                                            return; // カード自体の移動はキャンセル
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 写真スクロールが発動しなかった場合は通常のカードスワイプ
                         targetContainer.scrollBy({ left: direction * containerWidth, behavior: 'smooth' });
                     }
                 }
