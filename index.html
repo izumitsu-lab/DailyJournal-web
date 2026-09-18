@@ -999,5 +999,49 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
             }
         });
     </script>
+
+    <!-- キーボードによる左右スワイプ操作の実装 -->
+    <script>
+        window.addEventListener('keydown', function(e) {
+            // 文字入力中・編集中の場合は処理をスキップする
+            const activeEl = document.activeElement;
+            if (activeEl) {
+                const tag = activeEl.tagName.toUpperCase();
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+                if (activeEl.isContentEditable) return;
+                if (activeEl.classList && activeEl.classList.contains('is-editing')) return;
+                if (activeEl.closest && activeEl.closest('.is-editing')) return;
+            }
+
+            // モーダルや全画面ポップアップが開いている場合は処理をスキップする
+            const activeModals = document.querySelectorAll('.modal-overlay.active, .fullscreen-popup-overlay.active');
+            if (activeModals.length > 0) return;
+
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                let targetContainer = null;
+
+                // 対象となる表示モード（スコープ）の判定
+                if (typeof calendarScope !== 'undefined') {
+                    if (['day', 'week', 'month', 'photo'].includes(calendarScope)) {
+                        targetContainer = document.getElementById('journalCarouselContainer');
+                    } else if (calendarScope === 'notebooks' && typeof notebookViewMode !== 'undefined') {
+                        // Card View, Linked View など横スクロールカルーセルを使うモード時のみ
+                        if (['card', 'linked', 'single'].includes(notebookViewMode)) {
+                            targetContainer = document.getElementById('connectedCenterScroller');
+                        }
+                    }
+                }
+
+                if (targetContainer) {
+                    const direction = (e.key === 'ArrowLeft') ? -1 : 1;
+                    const containerWidth = targetContainer.clientWidth;
+                    if (containerWidth > 0) {
+                        e.preventDefault(); // デフォルトのスクロール挙動を防止
+                        targetContainer.scrollBy({ left: direction * containerWidth, behavior: 'smooth' });
+                    }
+                }
+            }
+        });
+    </script>
 </body>
 </html>
