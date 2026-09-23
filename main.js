@@ -45,6 +45,36 @@ let hideEmptyCards = localStorage.getItem('daily_journal_hide_empty') === 'true'
 // 表示モード設定 ('auto', 'mobile', 'desktop')
 let deviceDisplayMode = localStorage.getItem('daily_journal_device_mode') || 'auto';
 
+// 写真の保存サイズ（端末ごとの設定）。写真を追加したときに一度だけ縮小して保存する。保存済みの写真は変わらない
+// size は実際の写真での1枚あたりの目安（高画質で約300KBだった実績と、縮小率ごとの計測から算出）
+const PHOTO_QUALITY_PRESETS = {
+    high:     { label: '高画質', maxDimension: 1400, quality: 0.85, size: '約300KB' },
+    standard: { label: '標準',   maxDimension: 1200, quality: 0.80, size: '約200KB' },
+    saver:    { label: '節約',   maxDimension: 1000, quality: 0.75, size: '約130KB' },
+    minimum:  { label: '最小',   maxDimension: 800,  quality: 0.70, size: '約80KB' }
+};
+let photoQuality = PHOTO_QUALITY_PRESETS[localStorage.getItem('daily_journal_photo_quality')] ? localStorage.getItem('daily_journal_photo_quality') : 'standard';
+function getPhotoQualityPreset() { return PHOTO_QUALITY_PRESETS[photoQuality] || PHOTO_QUALITY_PRESETS.standard; }
+function applyPhotoQualitySetting() {
+    const sel = document.getElementById('photoQualitySelect');
+    if (sel) sel.value = photoQuality;
+    const p = getPhotoQualityPreset();
+    document.querySelectorAll('.photo-size-notice').forEach(el => { el.textContent = `自動縮小・${p.label}`; });
+    const info = document.getElementById('photoQualityLastInfo');
+    if (info) {
+        let last = null;
+        try { last = JSON.parse(localStorage.getItem('daily_journal_last_photo') || 'null'); } catch (e) { last = null; }
+        info.textContent = last && last.bytes
+            ? `直前に追加した写真：${Math.round(last.bytes / 1024)}KB（${last.w}×${last.h}px・${(PHOTO_QUALITY_PRESETS[last.preset] || {}).label || ''}）`
+            : 'まだこの端末で写真を追加していません';
+    }
+}
+function changePhotoQuality(val) {
+    photoQuality = PHOTO_QUALITY_PRESETS[val] ? val : 'standard';
+    localStorage.setItem('daily_journal_photo_quality', photoQuality);
+    applyPhotoQualitySetting();
+}
+
 // Gallery View 列数設定 ('auto', '3', '4', '5')
 let galleryColumns = localStorage.getItem('daily_journal_gallery_cols') || 'auto';
 
@@ -1041,6 +1071,7 @@ async function startApp() {
     applyTheme(); 
     applyHideEmptyCardsSetting();
     applyGalleryColumnsSetting();
+    applyPhotoQualitySetting();
     applyDeviceModeSetting();
 
     // 他のタブに「このタブが使う」と知らせ、そちらの保存が終わるのを少し待ってから読み込む

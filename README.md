@@ -26,5 +26,6 @@ npm test
   タイプ・カテゴリが、新しくログインした端末に届く／クラウドの既定値で上書きされない
 - `test-stability.js` … iPhone での安定性（ビューの連打で描き直しは最後の1回、一覧は縮小画像、画面外の画像を手放す）、
   「軽量化」ボタンは画像が直接入った行があるときだけ表示・同期で自動的に置き換わる
+- `test-photo-quality.js` … 写真の保存サイズ（高画質・標準・節約・最小）が設定どおりに縮小され、保存済みの写真は変わらない
 - `bench-memory.js` … 画像の多いデータで、展開された画像のメモリ量と描画回数を測る（`node bench-memory.js`）
 - `harness.js` / `fake-supabase.js` … テスト用の偽サーバー（timestamptz は Postgres と同じ形式で返す）

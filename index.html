@@ -762,6 +762,19 @@
                         <span class="slider"></span>
                     </label>
                 </div>
+                <div class="option-group" style="flex-direction: column; align-items: stretch; gap: 8px;">
+                    <div>
+                        <span class="option-title">写真の保存サイズ</span>
+                        <div class="option-desc">これから追加する写真に適用（保存済みの写真は変わりません）</div>
+                        <div class="option-desc" id="photoQualityLastInfo" style="margin-top: 3px;"></div>
+                    </div>
+                    <select class="settings-select" id="photoQualitySelect" style="width: 100%; max-width: none;" onchange="changePhotoQuality(this.value)">
+                        <option value="high">高画質 (1400px・約300KB/枚)</option>
+                        <option value="standard">標準 (1200px・約200KB/枚)</option>
+                        <option value="saver">節約 (1000px・約130KB/枚)</option>
+                        <option value="minimum">最小 (800px・約80KB/枚)</option>
+                    </select>
+                </div>
                 <div class="option-group">
                     <div>
                         <span class="option-title">Gallery View の列数</span>

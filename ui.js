@@ -151,7 +151,11 @@ function parseLinksAndText(text) {
 
 function escapeHtml(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;'); }
 
-function resizeImageFile(file, maxDimension = 1400, quality = 0.85) {
+// 写真を追加するときの縮小。大きさ・画質は設定の「写真の保存サイズ」に従う
+function resizeImageFile(file, maxDimension, quality) {
+    const preset = getPhotoQualityPreset();
+    if (!maxDimension) maxDimension = preset.maxDimension;
+    if (!quality) quality = preset.quality;
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -164,7 +168,13 @@ function resizeImageFile(file, maxDimension = 1400, quality = 0.85) {
                 }
                 const cvs = document.createElement('canvas'); cvs.width = w; cvs.height = h;
                 cvs.getContext('2d').drawImage(img, 0, 0, w, h);
-                resolve(cvs.toDataURL('image/jpeg', quality));
+                const out = cvs.toDataURL('image/jpeg', quality);
+                try {
+                    const b64 = out.length - out.indexOf(',') - 1;
+                    localStorage.setItem('daily_journal_last_photo', JSON.stringify({ bytes: Math.round(b64 * 3 / 4), w, h, preset: photoQuality }));
+                    applyPhotoQualitySetting();
+                } catch (e) {}
+                resolve(out);
             };
             img.onerror = reject; img.src = e.target.result;
         };
