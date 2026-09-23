@@ -428,6 +428,48 @@ function cleanNotebookPreviewHtml(html) {
     return tpl.innerHTML;
 }
 
+// 一覧カード（Gallery・Trash・リンク一覧）用のプレビュー。
+// ※以前は本文を丸ごと（画像も原寸のまま）表示していたため、Gallery View で全ノートの画像が一度に展開され、
+//   iPhone でメモリ不足による強制終了の原因になっていた。
+//   → 画像は先頭の2枚だけにし、縮小画像を画面に近づいたときだけ読み込む（本文の画像データ自体は変更しない）。
+const NB_PREVIEW_MAX_IMAGES = 2;
+const NB_PREVIEW_THUMB_SIZE = 480;
+let _nbPreviewCache = new Map();
+function buildNotebookPreviewHtml(html) {
+    if (!html) return '';
+    const cached = _nbPreviewCache.get(html);
+    if (cached !== undefined) return cached;
+    // 解析の前に画像データを短い目印に置き換える（数MBの文字列を毎回解析・複製しないため）
+    const light = html.replace(DATA_URI_RE, m => {
+        const key = _nbThumbKey(m);
+        _nbThumbSrc.set(key, m);
+        return '#nbthumb-' + key;
+    });
+    const tpl = _parseInert(sanitizeNoteHtml(light));
+    tpl.content.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+    tpl.content.querySelectorAll('img').forEach((img, i) => {
+        if (i >= NB_PREVIEW_MAX_IMAGES) { (img.closest('.nb-img-wrapper') || img).remove(); return; }
+        const src = img.getAttribute('src') || '';
+        if (src.startsWith('#nbthumb-')) {
+            img.setAttribute('src', IMG_PLACEHOLDER);
+            img.setAttribute('data-nbthumb', src.slice('#nbthumb-'.length));
+            img.setAttribute('data-thumb', String(NB_PREVIEW_THUMB_SIZE));
+        }
+    });
+    const out = tpl.innerHTML;
+    if (_nbPreviewCache.size > 300) _nbPreviewCache = new Map();
+    _nbPreviewCache.set(html, out);
+    return out;
+}
+// 本文の画像が使われなくなったら、プレビュー用の参照も捨てる（ノートを削除・編集した後など）
+function prunePreviewImageRefs() {
+    const live = new Set();
+    for (const n of notebookData) { const m = (n.content || '').match(DATA_URI_RE); if (m) m.forEach(u => live.add(_nbThumbKey(u))); }
+    for (const k of [..._nbThumbSrc.keys()]) if (!live.has(k)) _nbThumbSrc.delete(k);
+    const liveContent = new Set(notebookData.map(n => n.content));
+    for (const k of [..._nbPreviewCache.keys()]) if (!liveContent.has(k)) _nbPreviewCache.delete(k);
+}
+
 function createNotebookCardElement(n) {
     const card = document.createElement('div');
     card.className = 'notebook-grid-card';
@@ -435,7 +477,7 @@ function createNotebookCardElement(n) {
     
     const catBadgeHtml = buildNotebookCategoryBadge(n);
     const statusBadgeHtml = buildStatusBadgeHtml(n.status || 'archive', n.id);
-    const rawContent = (n.content && n.content.trim()) ? cleanNotebookPreviewHtml(n.content) : '<span style="opacity:0.4;">(空のノート)</span>';
+    const rawContent = (n.content && n.content.trim()) ? buildNotebookPreviewHtml(n.content) : '<span style="opacity:0.4;">(空のノート)</span>';
     
     card.innerHTML = `
         <h3 class="notebook-grid-title">${escapeHtml(n.title || '無題のノート')}</h3>
@@ -553,7 +595,7 @@ function renderTrashMode(container, filteredNotebooks, filterBadgeHtml) {
         card.style.cursor = 'default';
 
         const catBadgeHtml = buildNotebookCategoryBadge(n);
-        const rawContent = (n.content && n.content.trim()) ? cleanNotebookPreviewHtml(n.content) : '<span style="opacity:0.4;">(空のノート)</span>';
+        const rawContent = (n.content && n.content.trim()) ? buildNotebookPreviewHtml(n.content) : '<span style="opacity:0.4;">(空のノート)</span>';
 
         card.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
@@ -1315,7 +1357,7 @@ function updateConnectedRightSidebar(currentNote) {
         linkedNotes.forEach(ln => {
             const catBadgeHtml = buildNotebookCategoryBadge(ln);
             const statusBadgeHtml = buildStatusBadgeHtml(ln.status || 'archive', ln.id);
-            const rawContent = (ln.content && ln.content.trim()) ? cleanNotebookPreviewHtml(ln.content) : '<span style="opacity:0.4;">(空のノート)</span>';
+            const rawContent = (ln.content && ln.content.trim()) ? buildNotebookPreviewHtml(ln.content) : '<span style="opacity:0.4;">(空のノート)</span>';
             
             const unlinkBtnHtml = window.IS_READONLY_MODE ? '' : `<button type="button" class="nb-unlink-btn" onclick="unlinkNotebook('${currentNote.id}', '${ln.id}', event)" title="このノートとのリンクを解除">✕ 解除</button>`;
 

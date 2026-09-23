@@ -186,8 +186,7 @@ function initSupabase(url, key) {
         _schemaState = 'unknown';
         document.getElementById('supabaseAuthBox').style.display = 'block';
         document.getElementById('supabaseSetupBox').style.display = 'block';
-        const migrateBox = document.getElementById('supabaseMigrateBox');
-        if (migrateBox) migrateBox.style.display = 'block';
+        updateMigrateBoxVisibility(); // 「軽量化」はクラウドに画像が直接残っているときだけ表示
         const cleanupBox = document.getElementById('supabaseCleanupBox');
         if (cleanupBox) cleanupBox.style.display = 'block';
         setupNetworkAndLifecycleListeners();
@@ -298,6 +297,7 @@ async function checkSupabaseAuth() {
         logoutBtn.style.display = "none";
         unsubscribeRealtime();
     }
+    updateMigrateBoxVisibility();
     updateSyncStatusUI();
 }
 
@@ -559,6 +559,8 @@ function _daySig(logs, tomb) {
 async function mergeRemoteJournalRow(row) {
     const d = row && row.date_str;
     if (!DATE_KEY_RE.test(d || '')) return false;
+    const rowHasInline = _journalRowHasInline(row);
+    _noteInlineImages('j', d, rowHasInline);
     const remoteLogs = sanitizeDayLogs(d, row.log_data);
     const remoteTomb = sanitizeTombstoneMap(row.tombstones);
 
@@ -607,7 +609,8 @@ async function mergeRemoteJournalRow(row) {
     rebaselineJournal([d]);
 
     // クラウドの行とマージ結果が一致していれば送信不要、違えば送信対象
-    if (!unresolved && _daySig(result, tomb) === _daySig(remoteLogs, remoteTomb)) pendingJournalDates.delete(d);
+    // 画像が行に直接入っている（以前のバージョンの不具合）なら、内容が同じでも送り直して Storage 参照に置き換える
+    if (!unresolved && !rowHasInline && _daySig(result, tomb) === _daySig(remoteLogs, remoteTomb)) pendingJournalDates.delete(d);
     else pendingJournalDates.add(d);
 
     return changed || tombChanged;
@@ -629,6 +632,10 @@ async function _resolveNoteContent(html) {
 
 async function mergeRemoteNotebookRow(row) {
     if (!row || !isSafeId(row.id)) return false;
+    const rowHasInline = !row.deleted && typeof row.content === 'string' && row.content.indexOf('data:image') !== -1;
+    _noteInlineImages('n', row.id, rowHasInline);
+    // 画像が行に直接入っているノートは、内容が同じでも送り直して Storage 参照に置き換える
+    const settle = () => { if (rowHasInline) pendingNotebookIds.add(row.id); else pendingNotebookIds.delete(row.id); };
     const id = row.id;
     // Postgres の timestamptz は "…+00:00" 形式で返るため、アプリ側の "…Z" 形式に揃えてから比較する
     const remoteTime = _normIso(row.edited_at || row.updated_at);
@@ -659,7 +666,7 @@ async function mergeRemoteNotebookRow(row) {
     if (remoteTime === localTime()) {
         const n = notebookData.find(x => x.id === id);
         const localDeleted = !n;
-        if (localDeleted === !!row.deleted) pendingNotebookIds.delete(id);
+        if (localDeleted === !!row.deleted) settle();
         return false;
     }
 
@@ -688,7 +695,7 @@ async function mergeRemoteNotebookRow(row) {
     if (idx !== -1) notebookData[idx] = note; else notebookData.push(note);
     delete notebookTombstones[id];
     rebaselineNotebooks([id]);
-    pendingNotebookIds.delete(id);
+    settle();
     return true;
 }
 
@@ -979,6 +986,7 @@ async function _pushJournals(dates) {
         if (error) throw error;
         for (const p of payload) {
             if ((_journalDirtyVer.get(p.date_str) || 0) === vers.get(p.date_str)) pendingJournalDates.delete(p.date_str);
+            _noteInlineImages('j', p.date_str, false); // 送信する行の画像は必ず Storage 参照になっている
         }
         _persistPending();
     }
@@ -1039,6 +1047,7 @@ async function _pushNotebooks(ids) {
         if (error) throw error;
         for (const p of payload) {
             if ((_notebookDirtyVer.get(p.id) || 0) === vers.get(p.id)) pendingNotebookIds.delete(p.id);
+            _noteInlineImages('n', p.id, false);
         }
         _persistPending();
     }
@@ -1114,6 +1123,7 @@ async function _pull(fullSync) {
 
         // 取得に成功した後にだけカーソルを進める（途中で失敗したら次回同じ範囲をやり直す）
         _setCursor(next);
+        if (!_loadInlineState().scanned) { try { await _scanInlineImagesOnce(); } catch (e) { console.warn('画像の埋め込み確認に失敗しました（次回やり直します）', e); } }
         _persistPending();
         if (uiChanged) refreshUIAfterSync();
         _lastSyncError = null;
@@ -1145,10 +1155,74 @@ async function migrateEmbeddedImagesToStorage() {
 
     Object.keys(journalData).forEach(d => pendingJournalDates.add(d));
     notebookData.forEach(n => pendingNotebookIds.add(n.id));
+    // クラウドにだけ残っている行も対象にする（送信前にクラウドの行を読み込んでマージするので、画像も Storage に移る）
+    const inl = _loadInlineState();
+    inl.j.forEach(d => { if (DATE_KEY_RE.test(d)) pendingJournalDates.add(d); });
+    inl.n.forEach(id => { if (isSafeId(id)) pendingNotebookIds.add(id); });
     _persistPending();
     await syncNow(false);
     if (_lastSyncError || _schemaState === 'outdated') alert("移行を完了できませんでした。通信状態とサーバー設定を確認し、時間をおいて再度お試しください。");
     else alert("移行が完了しました。Supabaseダッシュボードの Storage と Table Editor でサイズをご確認ください。");
+    updateMigrateBoxVisibility();
+}
+
+// ==========================================
+// 8.4 「データベース軽量化」ボタンの表示判定
+// ==========================================
+// 以前のバージョンの不具合で、画像が Storage ではなくデータベースの行に直接入ってしまっている場合だけ
+// 「軽量化（画像の再アップロード）」を表示する。
+// どの行に画像が直接入っているかは、取得（マージ）・送信のたびに記録する。
+// 以前から使っている端末は、差分取得では古い行を見直さないので、最初の1回だけ全行を確認する。
+function _inlineStateKey() { return 'daily_journal_cloud_inline_' + (supabaseUser ? supabaseUser.id : ''); }
+let _inlineStateCache = { key: null, st: null };
+function _loadInlineState() {
+    const k = _inlineStateKey();
+    if (_inlineStateCache.key !== k) {
+        let st = null;
+        try { st = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { st = null; }
+        if (!st || typeof st !== 'object') st = {};
+        _inlineStateCache = { key: k, st: { j: Array.isArray(st.j) ? st.j : [], n: Array.isArray(st.n) ? st.n : [], scanned: !!st.scanned } };
+    }
+    return _inlineStateCache.st;
+}
+function _saveInlineState() {
+    if (!supabaseUser || (typeof isTabActive === 'function' && !isTabActive())) return;
+    localStorage.setItem(_inlineStateKey(), JSON.stringify(_loadInlineState()));
+}
+function _journalRowHasInline(row) {
+    const logs = Array.isArray(row && row.log_data) ? row.log_data : [];
+    return logs.some(l => l && [].concat(Array.isArray(l.images) ? l.images : [], l.image ? [l.image] : [])
+        .some(s => typeof s === 'string' && s.startsWith('data:image')));
+}
+function _noteInlineImages(kind, key, has) {
+    if (!supabaseUser) return;
+    const st = _loadInlineState();
+    const arr = st[kind];
+    const i = arr.indexOf(key);
+    if (has && i === -1) arr.push(key);
+    else if (!has && i !== -1) arr.splice(i, 1);
+    else return;
+    _saveInlineState();
+    updateMigrateBoxVisibility();
+}
+function hasCloudInlineImages() {
+    if (!supabaseUser) return false;
+    const st = _loadInlineState();
+    return st.j.length > 0 || st.n.length > 0;
+}
+function updateMigrateBoxVisibility() {
+    const box = document.getElementById('supabaseMigrateBox');
+    if (box) box.style.display = (supabaseClient && hasCloudInlineImages()) ? 'block' : 'none';
+}
+async function _scanInlineImagesOnce() {
+    const st = _loadInlineState();
+    const j = await _selectAllColumns('journals', 'date_str,log_data');
+    const n = await _selectAllColumns('notebooks', 'id,content,deleted');
+    st.j = j.filter(_journalRowHasInline).map(r => r.date_str);
+    st.n = n.filter(r => !r.deleted && typeof r.content === 'string' && r.content.indexOf('data:image') !== -1).map(r => r.id);
+    st.scanned = true;
+    _saveInlineState();
+    updateMigrateBoxVisibility();
 }
 
 // ==========================================

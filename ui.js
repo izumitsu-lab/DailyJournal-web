@@ -59,13 +59,29 @@ function toggleHideEmptyCards() {
     triggerSmoothViewSwitch(() => { renderRightCards(); if (sidebarMode === 'cal' && calendarScope !== 'notebooks') renderMiniCalendar(); });
 }
 
+// 表示の切り替え。
+// ※以前は切り替えのたびに80ms後の描き直しを予約し、素早く連打すると予約が溜まって全カードの描き直しが連続で走っていた。
+//   iPhone ではその間に古い画面の画像が解放されないままメモリが跳ね上がり、アプリ（ページ）が落ちる原因になっていた。
+//   → 連打中は予約をまとめ、状態の変更だけを順に反映して、描き直しは最後に1回だけ行う。
+let _viewSwitchQueue = [];
+let _viewSwitchTimer = null;
+let _deferRender = false;
+let _renderDirty = false;
 function triggerSmoothViewSwitch(updateCallback) {
-    saveCurrentScrollPositions();
+    if (!_viewSwitchQueue.length) saveCurrentScrollPositions();
+    _viewSwitchQueue.push(updateCallback);
     const container = document.getElementById('journalCarouselContainer');
     isProgrammaticScroll = true;
     container.classList.add('is-transitioning');
-    setTimeout(() => {
-        updateCallback();
+    clearTimeout(_viewSwitchTimer);
+    _viewSwitchTimer = setTimeout(() => {
+        const queue = _viewSwitchQueue;
+        _viewSwitchQueue = [];
+        _deferRender = true; _renderDirty = false;
+        try {
+            for (const cb of queue) { try { cb(); } catch (e) { console.error(e); } }
+        } finally { _deferRender = false; }
+        if (_renderDirty) { _renderDirty = false; renderRightCards(); }
         container.classList.remove('is-transitioning');
         clearTimeout(programmaticScrollTimer);
         programmaticScrollTimer = setTimeout(() => { isProgrammaticScroll = false; }, 350);
@@ -174,7 +190,7 @@ function renderPhotoPreviews(m) {
     c.classList.add('has-photos');
     p.forEach((d, i) => {
         const div = document.createElement('div'); div.className = 'photo-preview-item';
-        div.innerHTML = `<img ${imgSrcAttrs(d)}><button class="photo-preview-del-btn" onclick="removePhotoAtIndex('${m}', ${i})">✕</button>`;
+        div.innerHTML = `<img ${imgSrcAttrs(d, 240)}><button class="photo-preview-del-btn" onclick="removePhotoAtIndex('${m}', ${i})">✕</button>`;
         c.appendChild(div);
     });
 }
@@ -199,43 +215,126 @@ function openLightbox(s) { document.getElementById('lightboxImg').src = s; docum
 // ==========================================
 // 記録の画像はメモリ上では "idbimg:<hash>" 参照。描画時は透明画像を置き、画面に近づいたら画像ストアから読み込む。
 const IMG_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-function imgSrcAttrs(ref) {
+// thumbSize を指定すると、小さく縮小した画像を表示する（一覧の小さな枠に原寸の写真を展開しないため）
+function imgSrcAttrs(ref, thumbSize = 0) {
     const h = idbRefHash(ref);
-    if (h) return `src="${IMG_PLACEHOLDER}" data-idbimg="${h}"`;
+    const t = thumbSize ? ` data-thumb="${thumbSize}"` : '';
+    if (h) return `src="${IMG_PLACEHOLDER}" data-idbimg="${h}"${t}`;
     if (isDataImage(ref)) return `src="${ref}"`;
     return `src="${IMG_PLACEHOLDER}" data-missing="1"`; // クラウドから取得できなかった画像
 }
 async function openLightboxFromImg(img) {
     if (!img) return;
     const h = img.dataset ? img.dataset.idbimg : null;
-    const src = h ? await getImageData(h) : img.src;
+    const nk = img.dataset ? img.dataset.nbthumb : null;
+    const src = h ? await getImageData(h) : (nk ? _nbThumbSrc.get(nk) : img.src);
     if (src) openLightbox(src);
 }
-async function _loadIdbImage(img) {
+
+// ------------------------------------------
+// 縮小画像（一覧・プレビュー用）
+// ------------------------------------------
+// iPhone は1ページで使えるメモリが少なく、1400px の写真は1枚展開するだけで約6MBを使う。
+// 以前は Gallery View で全ノートの画像を原寸のまま一度に展開していたため、画像が多いと数百MBになり、
+// 素早い切り替えと重なるとページが強制終了していた。
+const THUMB_CACHE_MAX = 300;
+const _thumbCache = new Map();   // "キー@サイズ" -> 縮小画像の dataURL（LRU）
+const _nbThumbSrc = new Map();   // ノート本文の画像キー -> 元の dataURL
+let _thumbQueue = Promise.resolve();
+function _thumbCacheGet(k) { const v = _thumbCache.get(k); if (v !== undefined) { _thumbCache.delete(k); _thumbCache.set(k, v); } return v; }
+function _thumbCachePut(k, v) { _thumbCache.set(k, v); while (_thumbCache.size > THUMB_CACHE_MAX) _thumbCache.delete(_thumbCache.keys().next().value); }
+// 縮小は1枚ずつ順番に行う（同時に何枚も原寸で展開しない）
+function _makeThumb(dataUrl, max) {
+    const job = _thumbQueue.then(() => new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+            try {
+                const w = img.naturalWidth, h = img.naturalHeight;
+                const s = Math.min(1, max / Math.max(w, h));
+                if (s >= 1) { resolve(dataUrl); return; }
+                const c = document.createElement('canvas');
+                c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+                c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+                const out = c.toDataURL('image/jpeg', 0.82);
+                c.width = 0; c.height = 0; img.src = IMG_PLACEHOLDER;
+                resolve(out);
+            } catch (e) { resolve(dataUrl); }
+        };
+        img.onerror = () => resolve(null);
+        img.src = dataUrl;
+    }));
+    _thumbQueue = job.catch(() => {});
+    return job;
+}
+async function getThumbnail(key, size, getSource) {
+    const k = key + '@' + size;
+    const c = _thumbCacheGet(k);
+    if (c !== undefined) return c;
+    const src = await getSource();
+    if (!src) return null;
+    const t = await _makeThumb(src, size);
+    if (t) _thumbCachePut(k, t);
+    return t;
+}
+function _nbThumbKey(dataUrl) { return 'n' + _fnv1a(_imageFpKey(dataUrl)); }
+
+// ------------------------------------------
+// 画像の遅延読み込み・画面外の画像の解放
+// ------------------------------------------
+// 記録の画像（data-idbimg）とノートのプレビュー画像（data-nbthumb）は、画面に近づいたら読み込み、
+// 画面から大きく離れたら透明画像に戻してメモリを手放す（以前は一度読み込むと手放さなかった）。
+const LAZY_IMG_SELECTOR = 'img[data-idbimg], img[data-nbthumb]';
+function _lazyKey(img) { return img.dataset.idbimg || img.dataset.nbthumb || ''; }
+async function _loadLazyImage(img) {
+    const key = _lazyKey(img);
+    if (!key || img.dataset.lazyLoaded === key) return;
+    img.dataset.lazyLoaded = key;
     const h = img.dataset.idbimg;
-    if (!h || img.dataset.idbLoaded === h) return;
-    img.dataset.idbLoaded = h;
-    const d = await getImageData(h);
-    if (img.dataset.idbimg !== h) return;
+    const getSource = () => h ? getImageData(h) : Promise.resolve(_nbThumbSrc.get(key) || null);
+    const size = parseInt(img.dataset.thumb || '0', 10);
+    let d = null;
+    try { d = size ? await getThumbnail(h ? 'i' + h : key, size, getSource) : await getSource(); } catch (e) { d = null; }
+    if (img.dataset.lazyLoaded !== key || !img.isConnected) return; // 待っている間に画面外へ出た・消えた
     if (d) img.src = d; else img.classList.add('img-missing');
 }
-const _idbImgObserver = ('IntersectionObserver' in window)
+function _unloadLazyImage(img) {
+    if (!img.dataset.lazyLoaded) return;
+    delete img.dataset.lazyLoaded;
+    img.src = IMG_PLACEHOLDER;
+}
+const _lazyImgObserver = ('IntersectionObserver' in window)
     ? new IntersectionObserver(entries => {
-        entries.forEach(e => { if (e.isIntersecting) { _idbImgObserver.unobserve(e.target); _loadIdbImage(e.target); } });
-    }, { rootMargin: '800px' })
+        entries.forEach(e => { if (e.isIntersecting) _loadLazyImage(e.target); else _unloadLazyImage(e.target); });
+    }, { rootMargin: '600px' })
     : null;
+function _lazyImagesIn(root) {
+    if (!root || !root.querySelectorAll) return [];
+    const list = root.matches && root.matches(LAZY_IMG_SELECTOR) ? [root] : [];
+    root.querySelectorAll(LAZY_IMG_SELECTOR).forEach(i => list.push(i));
+    return list;
+}
 function watchIdbImages(root) {
-    if (!root || !root.querySelectorAll) return;
-    const list = root.matches && root.matches('img[data-idbimg]') ? [root] : [];
-    root.querySelectorAll('img[data-idbimg]').forEach(i => list.push(i));
-    list.forEach(img => {
-        if (img.dataset.idbWatched === img.dataset.idbimg) return;
-        img.dataset.idbWatched = img.dataset.idbimg;
-        if (_idbImgObserver) _idbImgObserver.observe(img); else _loadIdbImage(img);
+    _lazyImagesIn(root).forEach(img => {
+        const key = _lazyKey(img);
+        if (img.dataset.lazyWatched === key) return;
+        img.dataset.lazyWatched = key;
+        if (_lazyImgObserver) _lazyImgObserver.observe(img); else _loadLazyImage(img);
+    });
+}
+// 画面から取り除かれた画像は監視をやめてすぐ手放す（描き直しのたびに古い画面の画像が残らないように）
+function _releaseRemovedImages(root) {
+    _lazyImagesIn(root).forEach(img => {
+        if (img.isConnected) return; // 移動しただけ
+        if (_lazyImgObserver) _lazyImgObserver.unobserve(img);
+        delete img.dataset.lazyWatched;
+        _unloadLazyImage(img);
     });
 }
 new MutationObserver(muts => {
-    for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) watchIdbImages(n);
+    for (const m of muts) {
+        for (const n of m.removedNodes) if (n.nodeType === 1) _releaseRemovedImages(n);
+        for (const n of m.addedNodes) if (n.nodeType === 1) watchIdbImages(n);
+    }
 }).observe(document.documentElement, { childList: true, subtree: true });
 function closeLightbox() { document.getElementById('lightboxModal').classList.remove('active'); document.getElementById('lightboxImg').src = ""; }
 
@@ -741,7 +840,7 @@ function renderFullscreenLinkedNotes() {
     linkedNotes.forEach(ln => {
         const catBadgeHtml = buildNotebookCategoryBadge(ln);
         const statusBadgeHtml = buildStatusBadgeHtml(ln.status || 'archive', ln.id);
-        const rawContent = (ln.content && ln.content.trim()) ? cleanNotebookPreviewHtml(ln.content) : '<span style="opacity:0.4;">(空のノート)</span>';
+        const rawContent = (ln.content && ln.content.trim()) ? buildNotebookPreviewHtml(ln.content) : '<span style="opacity:0.4;">(空のノート)</span>';
         
         const unlinkBtnHtml = window.IS_READONLY_MODE ? '' : `<button type="button" class="nb-unlink-btn" onclick="unlinkNotebook('${currentNote.id}', '${ln.id}', event)" title="このノートとのリンクを解除">✕ 解除</button>`;
 
@@ -791,7 +890,7 @@ function createLogItemHtml(log, dateStr, originalIndex) {
     else if (sType === 'outgoing') sBadge = `<span class="slack-direction-badge outgoing"><span>📤</span><span>自分から</span></span>`;
 
     const p = Array.isArray(log.images) ? log.images : (log.image ? [log.image] : []);
-    const pHtml = p.length > 0 ? `<div class="log-photos-grid">` + p.map(img => `<div class="log-photo-thumb-wrap" onclick="event.stopPropagation(); openLightboxFromImg(this.querySelector('img'))"><img class="log-photo-thumb" ${imgSrcAttrs(img)} loading="lazy"></div>`).join('') + `</div>` : "";
+    const pHtml = p.length > 0 ? `<div class="log-photos-grid">` + p.map(img => `<div class="log-photo-thumb-wrap" onclick="event.stopPropagation(); openLightboxFromImg(this.querySelector('img'))"><img class="log-photo-thumb" ${imgSrcAttrs(img, 240)}></div>`).join('') + `</div>` : "";
 
     let cHtml = "";
     if (sType === 'incoming') cHtml = `<div class="chat-bubble-card incoming"><div class="chat-bubble-header"><span>💬</span><span>${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
@@ -820,6 +919,8 @@ function getEmptyStateMessage() {
 }
 
 function renderRightCards() {
+    // 表示切り替えの処理中は描き直しを1回にまとめる（triggerSmoothViewSwitch 参照）
+    if (_deferRender) { _renderDirty = true; return; }
     saveCurrentScrollPositions();
     const container = document.getElementById('journalCarouselContainer');
     if (container) container.classList.remove('grid-mode-active');
@@ -970,7 +1071,7 @@ function renderPhotoJournalCarousel() {
         const sType = showSlack ? (log.slackType || (log.isSlack ? 'incoming' : null)) : null;
 
         let sb = ""; if (sType === 'incoming') sb = `<span class="slack-direction-badge incoming"><span>📥</span><span>相手から</span></span>`; else if (sType === 'outgoing') sb = `<span class="slack-direction-badge outgoing"><span>📤</span><span>自分から</span></span>`;
-        let sHtml = ""; photos.forEach(u => sHtml += `<div class="photo-stage-slide"><img class="photo-stage-full-img" ${imgSrcAttrs(u)} onclick="openLightboxFromImg(this)" loading="lazy"></div>`);
+        let sHtml = ""; photos.forEach(u => sHtml += `<div class="photo-stage-slide"><img class="photo-stage-full-img" ${imgSrcAttrs(u)} onclick="openLightboxFromImg(this)"></div>`);
         const cp = photos.length > 1 ? `<div class="photo-count-pill">📷 1 / ${photos.length}</div>` : '';
         
         let mb = "";

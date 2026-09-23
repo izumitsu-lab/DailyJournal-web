@@ -939,7 +939,7 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
                 <div class="settings-card-box" id="supabaseMigrateBox" style="display: none;">
                     <div class="settings-card-title">🧹 データベース軽量化（画像の再アップロード）</div>
                     <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
-                        以前の設定ミス等で、画像がStorageではなくデータベース側に直接入ってしまっている場合に使います。本体（このスマホ/PC）に保存されている元データを元に、画像をクラウドStorageへアップロードし直し、データベース側は参照だけの軽い状態にします。
+                        以前の設定ミス等で、画像がStorageではなくデータベース側に直接入ってしまっている場合に使います。本体（このスマホ/PC）に保存されている元データを元に、画像をクラウドStorageへアップロードし直し、データベース側は参照だけの軽い状態にします。<br>※クラウドに画像が直接残っている行が見つかったときだけ表示されます。通常は同期のたびに自動で置き換わるので、表示が消えない場合にだけ使ってください。
                     </div>
                     <button type="button" class="data-action-btn" onclick="migrateEmbeddedImagesToStorage()">画像をStorageへ再アップロードする</button>
                 </div>

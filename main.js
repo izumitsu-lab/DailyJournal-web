@@ -167,7 +167,8 @@ async function sha256Hex(str) {
 }
 
 // 画像キャッシュ（ハッシュ -> dataURL、合計サイズで上限を設けるLRU）
-const IMG_CACHE_BUDGET = 48 * 1024 * 1024; // 文字数（≒バイト数）
+// iPhone などはページで使えるメモリが少ないので、画像キャッシュを小さくする
+const IMG_CACHE_BUDGET = (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? 16 : 48) * 1024 * 1024; // 文字数（≒バイト数）
 const _imgCache = new Map();
 let _imgCacheSize = 0;
 function _cachePut(h, d) {
@@ -528,6 +529,7 @@ async function persistJournal() {
 }
 
 let _nbPersistCache = new Map();
+let _previewPruneTimer = null;
 async function persistNotebooks() {
     if (_tabInactive) return;
     const nextCache = new Map();
@@ -550,6 +552,10 @@ async function persistNotebooks() {
     }
     _nbPersistCache = nextCache;
     _pruneFpContentCache();
+    // 一覧プレビュー用の画像参照の掃除は、保存のたびではなく少し後にまとめて行う
+    if (typeof prunePreviewImageRefs === 'function' && !_previewPruneTimer) {
+        _previewPruneTimer = setTimeout(() => { _previewPruneTimer = null; try { prunePreviewImageRefs(); } catch (e) {} }, 15000);
+    }
 
     const db = await initDB();
     const tx = db.transaction([STORE_NAME, IMG_STORE], 'readwrite');
