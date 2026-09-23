@@ -837,10 +837,34 @@ async function _applySettingsData(s, editedAt = s._editedAt) {
     if (typeof syncAndMigrateCategories === 'function') await syncAndMigrateCategories();
 }
 
+// 以前のバージョンから使っている端末では、設定（タイプ・カテゴリ）はあっても「編集時刻」の記録がなく、
+// 「未送信の変更なし」と扱われていた。そのため、
+//   ・クラウドに設定がなければ、いつまでも送信されない（記録は届くのに、設定だけ他の端末に届かない）
+//   ・クラウドに設定があれば、その内容でこの端末の設定が上書きされて消える
+// という不具合があった。
+// → このアカウントとまだ一度も設定を同期していない端末（基準がない端末）は、
+//    手元の設定を「未送信の変更」として扱い、クラウドの設定と合わせてから送る（どちらの項目も消さない）。
+//    ただし、既定値のまま一度も触っていない端末（新しく入れたiPhoneなど）は、何も送らずクラウドの設定を受け取る。
+function _isUntouchedDefaultSettings() {
+    if (typeof DEFAULT_TYPES === 'undefined' || typeof DEFAULT_CATEGORIES === 'undefined') return false;
+    const norm = cs => JSON.stringify((cs || []).map(c => [c.name, c.type]));
+    return JSON.stringify(appTypes) === JSON.stringify(DEFAULT_TYPES) && norm(categories) === norm(DEFAULT_CATEGORIES);
+}
+function _claimUnsyncedLocalSettings() {
+    if (!supabaseUser || pendingSettingsDirty || _loadSettingsBase()) return;
+    if (typeof isTabActive === 'function' && !isTabActive()) return;
+    if (_isUntouchedDefaultSettings()) return;
+    pendingSettingsDirty = true;
+    _settingsDirtyVer++;
+    if (!getSettingsEditedAt()) localStorage.setItem(SETTINGS_EDITED_AT_KEY, new Date().toISOString());
+    _persistPending();
+}
+
 // 戻り値: ローカル設定（画面に出る内容）が変わったら true
 async function mergeRemoteSettingsRow(row) {
     const s = sanitizeSettingsData(row && row.settings_data);
     if (!s) return false;
+    _claimUnsyncedLocalSettings();
     const localEdited = getSettingsEditedAt();
 
     if (!pendingSettingsDirty) {
@@ -889,6 +913,7 @@ async function _pushAll() {
     _isSyncing = true; updateSyncStatusUI();
     try {
         if (pendingJournalDates.size || pendingNotebookIds.size) await _checkImagesCleanedAt();
+        _claimUnsyncedLocalSettings();
         if (pendingSettingsDirty) await _pushSettings();
         if (pendingJournalDates.size) await _pushJournals([...pendingJournalDates]);
         if (pendingNotebookIds.size) await _pushNotebooks([...pendingNotebookIds]);
@@ -1056,7 +1081,7 @@ async function _pull(fullSync) {
         if (sErr) throw sErr;
         if (sRow && sRow.images_cleaned_at) _applyImagesCleanedAt(sRow.images_cleaned_at);
         if (sRow) { if (await mergeRemoteSettingsRow(sRow)) uiChanged = true; }
-        else if (fullSync && getSettingsEditedAt()) { pendingSettingsDirty = true; }
+        else { _claimUnsyncedLocalSettings(); if (fullSync && getSettingsEditedAt() && !_isUntouchedDefaultSettings()) pendingSettingsDirty = true; }
 
         // ジャーナル
         const jRows = await _selectSince('journals', cursor.j);
