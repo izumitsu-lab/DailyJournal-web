@@ -1,158 +1,72 @@
 // ==========================================
-// supabase-sync.js (Supabase 連携・オフライン耐性・リアルタイム反映)
+// supabase-sync.js (Supabase 連携・オフライン耐性・リアルタイム反映版)
 // ==========================================
 //
-// 同期の考え方（v2）
-// 1. 「上書き」ではなく「記録単位のマージ」
-//    - ジャーナルは1日＝1行だが、行の中の記録（ログ）ごとに id と updatedAt を持ち、
-//      ローカルとクラウドを id 単位で突き合わせて新しい方を採用する。
-//      → 2台で同じ日に書いても、両方の記録が残る。
-//    - ノートは1冊＝1行。edited_at（編集時刻）が新しい方を採用する。
-// 2. 削除は「削除の印（トゥームストーン）」として同期する
-//    - journals.tombstones = { 記録id: 削除時刻 }、notebooks.deleted = true
-//    - これがないと、他の端末の古いデータから削除したものが復活してしまう。
-// 3. 送信前に必ずクラウドの最新行を読み、マージしてから書き込む（read-merge-write）
-//    - オフラインで書いた内容が、復帰時にクラウドの古い版で消されることはない。
-// 4. 差分取得のカーソルはサーバー時刻（トリガーで付与される updated_at）で管理する
-//    - 端末の時計がずれていても、他端末の更新を取りこぼさない。
-// 5. 同期処理（送信・取得・リアルタイム反映）は1本の列に並べて順番に実行する
-//    - 取得中に届いた変更や編集を捨てない。
-//
-// ※ サーバー側に v2 用の列とトリガーが必要です（設定 > クラウド の SQL を実行）。
+// このファイルで解決している問題:
+// 1. オフライン時に保存した内容が「送信済み」扱いになり、二度と再送されなくなるバグを修正
+//    （送信は「成功が確認できるまでは未送信のまま」を徹底し、失敗時は必ず再送キューに残す）
+// 2. 未送信キューを localStorage に永続化し、オンライン復帰時・アプリ復帰時・定期的に自動で再送する
+// 3. 他デバイスの更新が「いつ届くか分からない」問題を解消するため、
+//    Supabase Realtime（即時通知）＋ 画面復帰時の差分取得の二段構えで反映タイミングを明確にする
+// 4. 通信量を抑えるため、通常時は「前回同期以降に更新された行だけ」を取得する（全件取得は初回ログイン時のみ）
+// 5. 同期状態（未送信件数・オフライン・同期済み時刻）を画面に明示し、手動で「今すぐ同期」できる手段を用意する
 
 let supabaseClient = null;
 let supabaseUser = null;
+let isPulling = false;
 let isOnline = navigator.onLine;
 let realtimeChannel = null;
 let _listenersBound = false;
-let _schemaState = 'unknown'; // 'unknown' | 'ok' | 'outdated'
-let _lastSyncError = null;
-let _isSyncing = false;
 
-let _pushTimer = null;
+let journalPushTimer = null;
+let notebookPushTimer = null;
+let settingsPushTimer = null;
 let retryLoopTimer = null;
 
-const SB_IMG_PREFIX = 'SBIMG:';
-const PULL_OVERLAP_MS = 30000; // 取りこぼし防止のため、前回カーソルより少し前から取得する（マージは冪等なので重複は無害）
+// 直近でクラウドと一致していることが確認できた内容（自分の書き込みのエコーを無視するために使う）
+let lastSyncedJournals = {};
+let lastSyncedNotebooks = {};
 
 // ==========================================
-// 0. 未送信キュー（送信に成功するまで消さない）
+// 0. 未送信キュー（オフライン等で送れなかったデータを覚えておく）
 // ==========================================
 
 function _safeParseArray(key) {
-    try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+    try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { return []; }
 }
 
-let pendingJournalDates = new Set(_safeParseArray('daily_journal_pending_journals').filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)));
+let pendingJournalDates = new Set(_safeParseArray('daily_journal_pending_journals'));
 let pendingNotebookIds = new Set(_safeParseArray('daily_journal_pending_notebooks'));
 let pendingSettingsDirty = localStorage.getItem('daily_journal_pending_settings') === '1';
 
-// 送信中に同じキーが再編集されたかを判定するための版数（送信成功時、版数が変わっていなければキューから外す）
-const _journalDirtyVer = new Map();
-const _notebookDirtyVer = new Map();
-let _settingsDirtyVer = 0;
-
 function _persistPending() {
-    if (typeof isTabActive === 'function' && !isTabActive()) return;
     localStorage.setItem('daily_journal_pending_journals', JSON.stringify([...pendingJournalDates]));
     localStorage.setItem('daily_journal_pending_notebooks', JSON.stringify([...pendingNotebookIds]));
     localStorage.setItem('daily_journal_pending_settings', pendingSettingsDirty ? '1' : '0');
-}
-
-// 別タブが直前まで書き込んでいた未送信キューを取り込み直す（タブを引き継いだとき）
-function reloadPendingQueue() {
-    _safeParseArray('daily_journal_pending_journals').filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).forEach(d => pendingJournalDates.add(d));
-    _safeParseArray('daily_journal_pending_notebooks').forEach(id => pendingNotebookIds.add(id));
-    if (localStorage.getItem('daily_journal_pending_settings') === '1') pendingSettingsDirty = true;
-}
-
-// このタブが使われなくなったら、同期を止める
-function onTabDeactivated() {
-    clearTimeout(_pushTimer);
-    clearInterval(retryLoopTimer);
-    unsubscribeRealtime();
 }
 
 function getPendingCount() {
     return pendingJournalDates.size + pendingNotebookIds.size + (pendingSettingsDirty ? 1 : 0);
 }
 
-// main.js の保存処理から「何が変わったか」を受け取る
-setLocalChangeListener((kind, keys) => {
-    if (kind === 'journal') {
-        keys.forEach(d => { pendingJournalDates.add(d); _journalDirtyVer.set(d, (_journalDirtyVer.get(d) || 0) + 1); });
-    } else if (kind === 'notebook') {
-        keys.forEach(id => { pendingNotebookIds.add(id); _notebookDirtyVer.set(id, (_notebookDirtyVer.get(id) || 0) + 1); });
-    } else if (kind === 'settings') {
-        pendingSettingsDirty = true;
-        _settingsDirtyVer++;
-    }
-    _persistPending();
-    updateSyncStatusUI();
-    schedulePush();
-});
-
-// ==========================================
-// 0.5 同期処理の直列化
-// ==========================================
-let _syncChain = Promise.resolve();
-function runExclusive(fn) {
-    const p = _syncChain.then(fn, fn);
-    _syncChain = p.catch(() => {});
-    return p;
-}
-
-function _canSync() {
-    return !!(supabaseClient && supabaseUser && navigator.onLine && _schemaState !== 'outdated' && isTabActive());
-}
-
-function schedulePush(delay = 800) {
-    clearTimeout(_pushTimer);
-    _pushTimer = setTimeout(() => {
-        if (!_canSync()) return;
-        runExclusive(async () => {
-            if (!(await _ensureSchema())) return;
-            await _pushAll();
-        }).catch(e => _reportSyncError(e));
-    }, delay);
-}
-
-function _reportSyncError(e) {
-    console.warn('同期に失敗しました（未送信分は保持され、自動で再試行します）', e);
-    _lastSyncError = e;
-    updateSyncStatusUI();
-}
-
-// ==========================================
-// 1. 同期状態の表示
-// ==========================================
+// 画面上の同期状態表示（バーの更新ボタン・設定画面のステータス行）を更新
 function updateSyncStatusUI() {
     const icon = document.getElementById('btnSyncPullIcon');
     const statusEl = document.getElementById('supabaseSyncStatus');
     if (!icon && !statusEl) return;
 
-    const configured = !!localStorage.getItem('daily_journal_supabase_url');
-    if (!configured) return;
-
     let text, iconChar, color;
-    const pending = getPendingCount();
+    const configured = !!localStorage.getItem('daily_journal_supabase_url');
 
-    if (!supabaseUser) {
+    if (!configured) {
+        return;
+    } else if (!supabaseUser) {
         text = "未ログイン（本体保存のみ）"; iconChar = "☁️"; color = "var(--text-secondary)";
-    } else if (_schemaState === 'outdated') {
-        text = "サーバー側の更新が必要です（設定 > クラウド のSQLを実行してください）。入力は本体に保存されています。";
-        iconChar = "⚠️"; color = "#e67e22";
     } else if (!isOnline) {
-        text = pending > 0 ? `オフライン（未送信 ${pending} 件・復帰後に自動送信）` : "オフライン（本体には保存済み）";
+        text = getPendingCount() > 0 ? `オフライン（未送信 ${getPendingCount()} 件・復帰後に自動送信）` : "オフライン（本体には保存済み）";
         iconChar = "📴"; color = "#e67e22";
-    } else if (_isSyncing) {
-        text = pending > 0 ? `同期中… (未送信 ${pending} 件)` : "同期中…";
-        iconChar = "🔄"; color = "#e67e22";
-    } else if (_lastSyncError) {
-        text = `同期エラー（未送信 ${pending} 件は保持・自動で再試行します）`;
-        iconChar = "⚠️"; color = "#e74c3c";
-    } else if (pending > 0) {
-        text = `送信待ち (未送信 ${pending} 件)`;
+    } else if (getPendingCount() > 0) {
+        text = `同期中… (未送信 ${getPendingCount()} 件)`;
         iconChar = "🔄"; color = "#e67e22";
     } else {
         const t = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
@@ -165,33 +79,35 @@ function updateSyncStatusUI() {
 }
 
 // ==========================================
-// 2. 初期化と設定管理
+// 1. 初期化と設定管理
 // ==========================================
+
 document.addEventListener('DOMContentLoaded', () => {
     const savedUrl = localStorage.getItem('daily_journal_supabase_url');
     const savedKey = localStorage.getItem('daily_journal_supabase_key');
 
     const urlInput = document.getElementById('supabaseUrlInput');
     const keyInput = document.getElementById('supabaseKeyInput');
+
     if (urlInput && savedUrl) urlInput.value = savedUrl;
     if (keyInput && savedKey) keyInput.value = savedKey;
 
-    if (savedUrl && savedKey) initSupabase(savedUrl, savedKey);
+    if (savedUrl && savedKey) {
+        initSupabase(savedUrl, savedKey);
+    }
 });
 
 function initSupabase(url, key) {
     if (!window.supabase) return;
     try {
         supabaseClient = window.supabase.createClient(url, key);
-        _schemaState = 'unknown';
         document.getElementById('supabaseAuthBox').style.display = 'block';
         document.getElementById('supabaseSetupBox').style.display = 'block';
         const migrateBox = document.getElementById('supabaseMigrateBox');
         if (migrateBox) migrateBox.style.display = 'block';
-        const cleanupBox = document.getElementById('supabaseCleanupBox');
-        if (cleanupBox) cleanupBox.style.display = 'block';
-        setupNetworkAndLifecycleListeners();
         checkSupabaseAuth();
+        hookCoreStorage();
+        setupNetworkAndLifecycleListeners();
     } catch (err) {
         console.error("Supabase初期化エラー:", err);
     }
@@ -200,6 +116,7 @@ function initSupabase(url, key) {
 function saveSupabaseConfig() {
     const url = document.getElementById('supabaseUrlInput').value.trim();
     const key = document.getElementById('supabaseKeyInput').value.trim();
+
     if (!url || !key) return alert("URLとAnon Keyを入力してください。");
 
     localStorage.setItem('daily_journal_supabase_url', url);
@@ -208,6 +125,7 @@ function saveSupabaseConfig() {
     initSupabase(url, key);
 }
 
+// 通信状態・アプリ復帰イベントを監視し、然るべきタイミングで自動的に再同期する
 function setupNetworkAndLifecycleListeners() {
     if (_listenersBound) return;
     _listenersBound = true;
@@ -215,75 +133,63 @@ function setupNetworkAndLifecycleListeners() {
     window.addEventListener('online', () => {
         isOnline = true;
         updateSyncStatusUI();
-        syncNow(false);
-        ensureRealtimeSubscribed();
+        // オンラインに戻った瞬間に、溜まっていた未送信データを送る
+        flushPendingPush();
     });
     window.addEventListener('offline', () => {
         isOnline = false;
         updateSyncStatusUI();
     });
 
-    // アプリ復帰時：未送信分を送ってから、差分を取得する
+    // スマホでアプリを閉じて→開き直した時など、Realtime接続が切れている間の更新を確実に拾う
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && supabaseClient && supabaseUser && navigator.onLine) {
-            syncNow(false);
+            flushPendingPush();
+            pullFromSupabase(false); // 差分のみ（通信量節約）
             ensureRealtimeSubscribed();
         }
     });
 
-    // 保険：送れていないデータがあれば定期的に再送
+    // 一定間隔で「送れていないデータ」がないか確認し、あれば再送を試みる（保険）
     clearInterval(retryLoopTimer);
     retryLoopTimer = setInterval(() => {
-        if (_canSync() && getPendingCount() > 0) schedulePush(0);
+        if (navigator.onLine && supabaseClient && supabaseUser && getPendingCount() > 0) {
+            flushPendingPush();
+        }
     }, 20000);
 }
 
-// 手動同期（設定画面・更新ボタン）：未送信分の送信＋全件照合
+// 手動同期（設定画面・更新ボタンから呼ばれる）：確実性を優先し、未送信分の送信＋全件チェックを行う
 async function forceSyncNow() {
     if (!supabaseClient || !supabaseUser) {
         alert("先にSupabaseへログインしてください。");
         return;
     }
-    await syncNow(true);
-    if (_schemaState === 'outdated') {
-        alert("サーバー側のデータベース更新が必要です。\n設定 > クラウド の「データベースセットアップ」のSQLを Supabase の SQL Editor で実行してください。");
-    }
+    updateSyncStatusUI();
+    await flushPendingPush();
+    await pullFromSupabase(true);
+    updateSyncStatusUI();
 }
 
 // ==========================================
-// 3. 認証 (Auth)
+// 2. 認証 (Auth) 処理
 // ==========================================
+
 async function checkSupabaseAuth() {
     if (!supabaseClient) return;
+    const { data: { session } } = await supabaseClient.auth.getSession();
     const statusEl = document.getElementById('supabaseAuthStatus');
     const logoutBtn = document.getElementById('supabaseLogoutBtn');
 
-    let session = null;
-    try {
-        const { data, error } = await supabaseClient.auth.getSession();
-        if (error) throw error;
-        session = data && data.session;
-    } catch (e) {
-        console.error('ログイン状態の確認に失敗しました', e);
-        statusEl.textContent = 'ログイン状態を確認できませんでした: ' + ((e && e.message) || e);
-        statusEl.style.color = '#e74c3c';
-        return;
-    }
-
     if (session && session.user) {
-        // ログイン状態の表示は、端末内データの読み込みを待たずにすぐ更新する
-        statusEl.textContent = `ログイン中: ${session.user.email}`;
+        supabaseUser = session.user;
+        statusEl.textContent = `ログイン中: ${supabaseUser.email}`;
         statusEl.style.color = "var(--notebook-color)";
         logoutBtn.style.display = "inline-flex";
 
-        // 同期は、端末内データの読み込み完了を待ってから始める（読み込み前にマージしない）
-        await appDataReady;
-        const switched = !supabaseUser || supabaseUser.id !== session.user.id;
-        supabaseUser = session.user;
-
+        await pullFromSupabase(true); // 初回は全件同期
         ensureRealtimeSubscribed();
-        // カーソルがなければ全件照合、あれば差分のみ
-        if (switched) await syncNow(!_getCursor().j);
+        if (getPendingCount() > 0) flushPendingPush(); // 前回オフラインで送れなかった分があれば送る
     } else {
         supabaseUser = null;
         statusEl.textContent = "未ログイン (本体保存のみ)";
@@ -300,9 +206,8 @@ async function signUpSupabase() {
     const password = document.getElementById('supabasePassword').value;
     if (!email || !password) return alert("メールアドレスとパスワードを入力してください。");
 
-    let error = null;
-    try { ({ error } = await supabaseClient.auth.signUp({ email, password })); } catch (e) { error = e; }
-    if (error) alert("登録エラー: " + (error.message || error));
+    const { error } = await supabaseClient.auth.signUp({ email, password });
+    if (error) alert("登録エラー: " + error.message);
     else {
         alert("登録完了！データの同期を開始します。");
         checkSupabaseAuth();
@@ -315,16 +220,9 @@ async function signInSupabase() {
     const password = document.getElementById('supabasePassword').value;
     if (!email || !password) return;
 
-    const statusEl = document.getElementById('supabaseAuthStatus');
-    if (statusEl) { statusEl.textContent = 'ログイン処理中…'; statusEl.style.color = 'var(--text-secondary)'; }
-    let error = null;
-    try {
-        ({ error } = await supabaseClient.auth.signInWithPassword({ email, password }));
-    } catch (e) { error = e; } // 通信エラー等で例外になった場合も必ず知らせる
-    if (error) {
-        alert("ログインエラー: " + (error.message || error));
-        checkSupabaseAuth();
-    } else {
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) alert("ログインエラー: " + error.message);
+    else {
         alert("ログインしました。クラウドのデータと同期します。");
         checkSupabaseAuth();
     }
@@ -334,810 +232,604 @@ async function signOutSupabase() {
     if (!supabaseClient) return;
     await supabaseClient.auth.signOut();
     unsubscribeRealtime();
-    supabaseUser = null;
     alert("ログアウトしました。これ以降は本体のみに保存されます。");
     checkSupabaseAuth();
 }
 
 // ==========================================
-// 4. サーバー側スキーマ（v2）の確認
+// 3. 画像のハッシュ化・無駄ゼロ通信モジュール
 // ==========================================
-async function _ensureSchema() {
-    if (_schemaState === 'ok') return true;
-    const a = await supabaseClient.from('journals').select('date_str,tombstones').limit(1);
-    const b = await supabaseClient.from('notebooks').select('id,deleted,edited_at').limit(1);
-    const err = a.error || b.error;
-    if (err) {
-        const msg = (err.message || '') + ' ' + (err.code || '');
-        if (/42703|column|does not exist|schema cache/i.test(msg)) {
-            _schemaState = 'outdated';
-            updateSyncStatusUI();
-            return false;
+
+// Base64から固有のハッシュ（ID）を生成する
+async function getHash(str) {
+    const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// 画像ストレージ参照の目印。DBにはURLではなく、この接頭辞+Storage内パスだけを保存する
+// （バケットは非公開なので「公開URL」は使わない。表示・復元のたびに署名付きURLを発行する）
+const SB_IMG_PREFIX = 'SBIMG:';
+
+// アップロード（重複時は通信をスキップして即参照パスを返す）
+async function uploadImageToSupabase(base64Str) {
+    if (!base64Str || !base64Str.startsWith('data:image')) return base64Str;
+    try {
+        const hash = await getHash(base64Str);
+        const ext = base64Str.substring(base64Str.indexOf('/') + 1, base64Str.indexOf(';')) || 'jpeg';
+        const fileName = `img_${hash}.${ext}`;
+        const filePath = `${supabaseUser.id}/${fileName}`;
+
+        // 同一ファイル名（ハッシュ）でアップロードを試みる
+        const res = await fetch(base64Str);
+        const blob = await res.blob();
+        const { error } = await supabaseClient.storage.from('images').upload(filePath, blob, { upsert: false });
+
+        // エラーが出ても「既に存在する(Duplicate)」なら正常なのでそのまま参照パスを返す
+        if (error && !error.message.includes('already exists') && !error.message.includes('Duplicate')) {
+            throw error;
         }
-        throw err; // 通信エラー等
-    }
-    _schemaState = 'ok';
-    return true;
-}
 
-// ==========================================
-// 5. 画像（Storage）
-// ==========================================
-// アップロード済み画像の一覧（ハッシュ -> Storage内パス）。ユーザーごとに保持
-function _uploadedKey() { return 'daily_journal_uploaded_paths_' + (supabaseUser ? supabaseUser.id : ''); }
-let _uploadedCache = { key: null, map: {} };
-function _uploadedMap() {
-    const k = _uploadedKey();
-    if (_uploadedCache.key !== k) {
-        let m = {};
-        try { m = JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch (e) { m = {}; }
-        _uploadedCache = { key: k, map: m };
-    }
-    return _uploadedCache.map;
-}
-// 他の端末が「不要画像の掃除」をした場合、この端末の「アップロード済み」記録は信用できないので捨てる
-function _validFromKey() { return 'daily_journal_uploaded_valid_from_' + (supabaseUser ? supabaseUser.id : ''); }
-function _applyImagesCleanedAt(cleanedAt) {
-    const t = _normIso(cleanedAt);
-    if (!t) return;
-    const validFrom = localStorage.getItem(_validFromKey()) || '';
-    if (t > validFrom) {
-        _uploadedCache = { key: _uploadedKey(), map: {} };
-        localStorage.setItem(_uploadedKey(), '{}');
-        localStorage.setItem(_validFromKey(), t);
+        // DBには非公開Storage内の「相対パス」だけを保存（実データはBase64のままStorageに残る）
+        return SB_IMG_PREFIX + filePath;
+    } catch (err) {
+        console.error("画像アップロード失敗:", err);
+        throw err; // 呼び出し元（push処理）に失敗を伝え、確実に再送キューに残す
     }
 }
-async function _checkImagesCleanedAt() {
-    const { data, error } = await supabaseClient.from('app_settings').select('images_cleaned_at').eq('user_id', supabaseUser.id).maybeSingle();
-    if (error) return; // 列がない（SQL未更新）場合は何もしない
-    if (data && data.images_cleaned_at) _applyImagesCleanedAt(data.images_cleaned_at);
-}
 
-function _markUploaded(hash, path) {
-    const m = _uploadedMap();
-    if (m[hash] === path) return;
-    m[hash] = path;
-    localStorage.setItem(_uploadedKey(), JSON.stringify(m));
-}
-
-// 画像（dataURL または "idbimg:" 参照）→ Storage にアップロードして "SBIMG:<uid>/img_<hash>.<ext>" を返す
-// アップロード済みなら通信せず、画像本体の読み込みもしない
-async function _toCloudImage(img) {
-    let hash = idbRefHash(img);
-    if (hash) {
-        const known = _uploadedMap()[hash];
-        if (known) return SB_IMG_PREFIX + known;
-        img = await getImageData(hash);
-        if (!img) throw new Error('画像が端末内に見つかりません: ' + hash);
-    }
-    if (!isDataImage(img)) return img;
-    if (!hash) hash = await hashImage(img);
-    const known = _uploadedMap()[hash];
-    if (known) return SB_IMG_PREFIX + known;
-
-    const ext = (img.substring(img.indexOf('/') + 1, img.indexOf(';')) || 'jpeg').replace(/[^a-z0-9]/gi, '') || 'jpeg';
-    const filePath = `${supabaseUser.id}/img_${hash}.${ext}`;
-    const blob = await (await fetch(img)).blob();
-    const { error } = await supabaseClient.storage.from('images').upload(filePath, blob, { upsert: false, contentType: blob.type || `image/${ext}` });
-    if (error) {
-        const m = `${error.message || ''} ${error.statusCode || ''} ${error.error || ''}`;
-        if (!/already exists|Duplicate|409/i.test(m)) throw error;
-    }
-    _markUploaded(hash, filePath);
-    return SB_IMG_PREFIX + filePath;
-}
-
-async function _blobToDataUrl(blob) {
-    return await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-}
-
-function _isNotFoundError(e) {
-    const m = `${(e && e.message) || ''} ${(e && e.statusCode) || ''} ${(e && e.error) || ''}`;
-    return /not found|404|does not exist/i.test(m);
-}
-
-async function _downloadCloudImage(ref) {
-    let blob;
-    if (ref.startsWith(SB_IMG_PREFIX)) {
-        const path = ref.slice(SB_IMG_PREFIX.length);
-        const { data, error } = await supabaseClient.storage.from('images').createSignedUrl(path, 600);
+// 非公開Storageから、都度その場限りの署名付きURL（有効期限付き）を発行して画像を取得する
+async function downloadImageFromStorage(ref) {
+    if (!ref) return ref;
+    const path = ref.startsWith(SB_IMG_PREFIX) ? ref.slice(SB_IMG_PREFIX.length) : ref;
+    try {
+        const { data, error } = await supabaseClient.storage.from('images').createSignedUrl(path, 3600);
         if (error || !data || !data.signedUrl) throw error || new Error('署名付きURLを取得できませんでした');
         const res = await fetch(data.signedUrl);
-        if (!res.ok) throw new Error(res.status === 404 ? 'Object not found' : 'image download failed: ' + res.status);
-        blob = await res.blob();
-    } else if (/^https:\/\/[^"'<>\s]+\/storage\/v1\/object\/public\/images\//.test(ref)) {
-        const res = await fetch(ref); // 旧・公開バケット形式の互換
-        if (!res.ok) throw new Error('image download failed: ' + res.status);
-        blob = await res.blob();
-    } else {
-        throw new Error('unsupported image ref');
-    }
-    const dataUrl = await _blobToDataUrl(blob);
-    if (!isValidDataImage(dataUrl)) throw new Error('downloaded file is not an image');
-    return dataUrl;
-}
-
-// クラウド側の画像値 → 端末の画像ストアに保存して "idbimg:<hash>" を返す（ジャーナル用）
-// 手元に同じ画像があれば通信しない。失敗時は例外（その行は次回やり直す）
-async function _resolveCloudImageToRef(ref) {
-    if (typeof ref !== 'string') throw new Error('invalid image');
-    const own = idbRefHash(ref);
-    if (own) { if (hasStoredImage(own)) return ref; throw new Error('missing local image'); }
-    if (isDataImage(ref)) {
-        if (!isValidDataImage(ref)) throw new Error('invalid data URI');
-        const h = await hashImage(ref);
-        await storeImage(h, ref);
-        return IDB_IMG_PREFIX + h;
-    }
-    const m = ref.match(/img_([a-f0-9]{64})\./);
-    if (m && ref.startsWith(SB_IMG_PREFIX)) _markUploaded(m[1], ref.slice(SB_IMG_PREFIX.length));
-    if (m && hasStoredImage(m[1])) return IDB_IMG_PREFIX + m[1];
-    let dataUrl;
-    try { dataUrl = await _downloadCloudImage(ref); }
-    catch (e) {
-        // クラウドに画像が存在しない場合は「欠けた画像」として参照のまま残す（同期全体は止めない）
-        if (_isNotFoundError(e)) { console.warn('クラウドに画像が見つかりません（欠けた画像として扱います）:', ref); return ref; }
-        throw e;
-    }
-    const h = m ? m[1] : await sha256Hex(dataUrl);
-    await storeImage(h, dataUrl);
-    return IDB_IMG_PREFIX + h;
-}
-
-// クラウド側の画像値 → dataURL（ノート本文用。ノートは画像を読み込んだ状態で持つ）
-async function _resolveCloudImageToData(ref) {
-    if (typeof ref !== 'string') throw new Error('invalid image');
-    const own = idbRefHash(ref);
-    if (own) { const d = await getImageData(own); if (d) return d; throw new Error('missing local image'); }
-    if (isDataImage(ref)) {
-        if (!isValidDataImage(ref)) throw new Error('invalid data URI');
-        await hashImage(ref);
-        return ref;
-    }
-    const m = ref.match(/img_([a-f0-9]{64})\./);
-    if (m && ref.startsWith(SB_IMG_PREFIX)) _markUploaded(m[1], ref.slice(SB_IMG_PREFIX.length));
-    if (m && hasStoredImage(m[1])) { const d = await getImageData(m[1]); if (d) { registerImage(m[1], d); return d; } }
-    let dataUrl;
-    try { dataUrl = await _downloadCloudImage(ref); }
-    catch (e) {
-        if (_isNotFoundError(e)) { console.warn('クラウドに画像が見つかりません（欠けた画像として扱います）:', ref); return ref; }
-        throw e;
-    }
-    if (m) registerImage(m[1], dataUrl); else await hashImage(dataUrl);
-    return dataUrl;
-}
-
-// ==========================================
-// 6. マージ（クラウドの1行 → ローカル）
-// ==========================================
-function _mergeTombs(a, b) {
-    const out = Object.assign({}, a);
-    for (const k of Object.keys(b)) if (!out[k] || b[k] > out[k]) out[k] = b[k];
-    return out;
-}
-function _isBuried(log, tomb) { return !!(tomb[log.id] && tomb[log.id] >= (log.updatedAt || '')); }
-function _daySig(logs, tomb) {
-    return JSON.stringify([
-        logs.filter(l => !_isBuried(l, tomb)).map(l => l.id + '@' + (l.updatedAt || '')).sort(),
-        Object.keys(tomb).map(k => k + '@' + tomb[k]).sort()
-    ]);
-}
-
-// 戻り値: ローカルのデータが変わったら true（呼び出し側で保存・再描画）
-async function mergeRemoteJournalRow(row) {
-    const d = row && row.date_str;
-    if (!DATE_KEY_RE.test(d || '')) return false;
-    const remoteLogs = sanitizeDayLogs(d, row.log_data);
-    const remoteTomb = sanitizeTombstoneMap(row.tombstones);
-
-    // 採用される可能性のあるクラウド側の記録だけ、画像を解決しておく
-    const resolved = new Map();
-    for (let attempt = 0; attempt < 3; attempt++) {
-        const localById = new Map((journalData[d] || []).map(l => [l.id, l]));
-        const need = remoteLogs.filter(r => {
-            if (resolved.has(r.id)) return false;
-            const c = localById.get(r.id);
-            return !c || (r.updatedAt || '') > (c.updatedAt || '');
+        const blob = await res.blob();
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
         });
-        if (!need.length) break;
-        for (const r of need) {
-            const imgs = [];
-            for (const ref of r.images) imgs.push(await _resolveCloudImageToRef(ref));
-            resolved.set(r.id, Object.assign({}, r, { images: imgs }));
-        }
+    } catch (e) {
+        console.error("画像ダウンロード失敗:", e);
+        return ref; // 失敗時は参照のまま返す（次回同期時に再試行される）
     }
-
-    // ここから先は同期的に（途中でユーザー編集が割り込まない）現在のローカルとマージ
-    const cur = journalData[d] || [];
-    const tomb = _mergeTombs(journalTombstones[d] || {}, remoteTomb);
-    const map = new Map(cur.map(l => [l.id, l]));
-    const order = cur.map(l => l.id);
-    let changed = false;
-    let unresolved = false;
-    for (const r of remoteLogs) {
-        const c = map.get(r.id);
-        if (c && (r.updatedAt || '') <= (c.updatedAt || '')) continue;
-        const rr = resolved.get(r.id);
-        if (!rr) { unresolved = true; continue; }
-        if (!c) order.push(r.id);
-        map.set(r.id, rr);
-        changed = true;
-    }
-    const result = order.map(id => map.get(id)).filter(l => !_isBuried(l, tomb));
-    if (result.length !== order.length) changed = true;
-    const tombChanged = JSON.stringify(tomb) !== JSON.stringify(journalTombstones[d] || {});
-
-    if (changed) {
-        if (result.length) journalData[d] = result; else delete journalData[d];
-        if (typeof dateList !== 'undefined' && result.length && !dateList.includes(d)) { dateList.push(d); dateList.sort(); }
-    }
-    if (Object.keys(tomb).length) journalTombstones[d] = tomb; else delete journalTombstones[d];
-    rebaselineJournal([d]);
-
-    // クラウドの行とマージ結果が一致していれば送信不要、違えば送信対象
-    if (!unresolved && _daySig(result, tomb) === _daySig(remoteLogs, remoteTomb)) pendingJournalDates.delete(d);
-    else pendingJournalDates.add(d);
-
-    return changed || tombChanged;
 }
 
-const _LEGACY_PUBLIC_IMG_RE = /https:\/\/[^"'<>\s]+\/storage\/v1\/object\/public\/images\/[^"'<>\s]+/g;
-const _SBIMG_IN_HTML_RE = /SBIMG:[A-Za-z0-9_\/.-]+/g;
-
-async function _resolveNoteContent(html) {
-    let content = sanitizeNoteHtml(html || '');
-    const refs = new Set([...(content.match(_SBIMG_IN_HTML_RE) || []), ...(content.match(_LEGACY_PUBLIC_IMG_RE) || [])]);
-    const map = new Map();
-    for (const ref of refs) map.set(ref, await _resolveCloudImageToData(ref));
-    if (map.size) content = content.replace(_SBIMG_IN_HTML_RE, m => map.get(m) || m).replace(_LEGACY_PUBLIC_IMG_RE, m => map.get(m) || m);
-    const inline = content.match(DATA_URI_RE) || [];
-    await ensureImageHashes(inline);
-    return content;
-}
-
-async function mergeRemoteNotebookRow(row) {
-    if (!row || !isSafeId(row.id)) return false;
-    const id = row.id;
-    // Postgres の timestamptz は "…+00:00" 形式で返るため、アプリ側の "…Z" 形式に揃えてから比較する
-    const remoteTime = _normIso(row.edited_at || row.updated_at);
-    const localTime = () => {
-        const n = notebookData.find(x => x.id === id);
-        return n ? (n.updatedAt || '') : (notebookTombstones[id] || '');
-    };
-
-    // このノートを編集中に、他の端末での更新が届いた場合（自分の送信のエコーは除く）
-    // → 画面の編集内容は上書きせず、相手の版を失わないよう別途保全する（notebooks.js 側で処理）
-    if (typeof getEditingNotebookBase === 'function') {
-        const base = getEditingNotebookBase(id);
-        const own = (_pushedEditedAt.get(id) || new Set()).has(remoteTime);
-        if (base !== null && !own && remoteTime > base) {
-            if (row.deleted) {
-                await handleRemoteEditConflict(id, { deleted: true, editedAt: remoteTime });
-            } else {
-                const content = await _resolveNoteContent(row.content);
-                const remoteNote = sanitizeNote({ id, title: row.title, content: '', category: row.category, status: row.status, linkedNoteIds: row.linked_note_ids, createdAt: row.created_at, updatedAt: remoteTime });
-                if (remoteNote) { remoteNote.content = content; await handleRemoteEditConflict(id, remoteNote); }
-            }
-            pendingNotebookIds.add(id);
-            return false;
-        }
-    }
-
-    if (remoteTime < localTime()) { pendingNotebookIds.add(id); return false; }
-    if (remoteTime === localTime()) {
-        const n = notebookData.find(x => x.id === id);
-        const localDeleted = !n;
-        if (localDeleted === !!row.deleted) pendingNotebookIds.delete(id);
-        return false;
-    }
-
-    // クラウド側が新しい
-    if (row.deleted) {
-        const idx = notebookData.findIndex(x => x.id === id);
-        if (idx !== -1) notebookData.splice(idx, 1);
-        notebookData.forEach(o => { if (Array.isArray(o.linkedNoteIds) && o.linkedNoteIds.includes(id)) o.linkedNoteIds = o.linkedNoteIds.filter(x => x !== id); });
-        notebookTombstones[id] = remoteTime;
-        rebaselineNotebooks([id]);
-        pendingNotebookIds.delete(id);
-        return true;
-    }
-
-    const content = await _resolveNoteContent(row.content);
-    if (remoteTime <= localTime()) { pendingNotebookIds.add(id); return false; } // 画像取得中にローカルで編集された
-
-    const note = sanitizeNote({
-        id, title: row.title, content: '', category: row.category, status: row.status,
-        linkedNoteIds: row.linked_note_ids, createdAt: row.created_at, updatedAt: remoteTime
-    });
-    if (!note) return false;
-    note.content = content;
-
-    const idx = notebookData.findIndex(x => x.id === id);
-    if (idx !== -1) notebookData[idx] = note; else notebookData.push(note);
-    delete notebookTombstones[id];
-    rebaselineNotebooks([id]);
-    pendingNotebookIds.delete(id);
-    return true;
-}
-
-function sanitizeSettingsData(s) {
-    if (!s || typeof s !== 'object') return null;
-    const str = v => typeof v === 'string' && v.trim() !== '' && v.length <= 60;
-    const boolMap = (m) => {
-        const o = {};
-        if (m && typeof m === 'object') for (const k of Object.keys(m)) if (str(k)) o[k] = !!m[k];
-        return o;
-    };
-    const out = {};
-    if (Array.isArray(s.appTypes)) out.appTypes = [...new Set(s.appTypes.filter(str))];
-    if (Array.isArray(s.categories)) {
-        const seen = new Set();
-        out.categories = s.categories
-            .filter(c => c && str(c.name) && !seen.has(c.name) && seen.add(c.name))
-            .map(c => ({ name: c.name, type: str(c.type) ? c.type : '一般' }));
-    }
-    if (s.typeSlackSettings) out.typeSlackSettings = boolMap(s.typeSlackSettings);
-    if (s.typeNotebookSettings) out.typeNotebookSettings = boolMap(s.typeNotebookSettings);
-    out._editedAt = typeof s._editedAt === 'string' ? s._editedAt : '';
-    return out;
-}
-
-async function _applySettingsData(s) {
-    if (s.appTypes && s.appTypes.length) {
-        appTypes.splice(0, appTypes.length, ...s.appTypes);
-        localStorage.setItem('daily_journal_types', JSON.stringify(appTypes));
-    }
-    if (s.categories && s.categories.length) {
-        categories.splice(0, categories.length, ...s.categories);
-        localStorage.setItem('daily_journal_categories', JSON.stringify(categories));
-    }
-    if (s.typeSlackSettings) {
-        Object.keys(typeSlackSettings).forEach(k => delete typeSlackSettings[k]);
-        Object.assign(typeSlackSettings, s.typeSlackSettings);
-        localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings));
-    }
-    if (s.typeNotebookSettings) {
-        Object.keys(typeNotebookSettings).forEach(k => delete typeNotebookSettings[k]);
-        Object.assign(typeNotebookSettings, s.typeNotebookSettings);
-        localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings));
-    }
-    localStorage.setItem(SETTINGS_EDITED_AT_KEY, s._editedAt || '');
-    if (typeof syncAndMigrateCategories === 'function') await syncAndMigrateCategories();
-}
-
-// 戻り値: ローカル設定が変わったら true
-async function mergeRemoteSettingsRow(row) {
-    const s = sanitizeSettingsData(row && row.settings_data);
-    if (!s) return false;
-    const localEdited = getSettingsEditedAt();
-    if (pendingSettingsDirty && localEdited > s._editedAt) return false; // ローカルの未送信変更の方が新しい → 送信で反映
-    if (!pendingSettingsDirty && localEdited && localEdited === s._editedAt) return false; // 同一
-    await _applySettingsData(s);
-    pendingSettingsDirty = false;
-    _persistPending();
-    return true;
-}
-
-// 自分が送信したノートの edited_at（リアルタイムで戻ってくるエコーを「他端末の更新」と誤認しないため）
-const _pushedEditedAt = new Map();
-function _rememberPushed(id, editedAt) {
-    let set = _pushedEditedAt.get(id);
-    if (!set) { set = new Set(); _pushedEditedAt.set(id, set); }
-    set.add(editedAt);
-    if (set.size > 50) set.delete(set.values().next().value);
-}
-
-// ==========================================
-// 7. 送信（read-merge-write）
-// ==========================================
-function _normIso(v) {
-    if (!v) return '';
-    const t = Date.parse(v);
-    return isNaN(t) ? '' : new Date(t).toISOString();
-}
-
-function _chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
-
-async function _pushAll() {
-    if (!_canSync()) return;
-    _isSyncing = true; updateSyncStatusUI();
+// 旧バージョン（バケットが公開だった場合）の互換用。通常は使われない。
+async function downloadImageToBase64(url) {
+    if (!url || !url.startsWith('http')) return url;
     try {
-        if (pendingJournalDates.size || pendingNotebookIds.size) await _checkImagesCleanedAt();
-        if (pendingSettingsDirty) await _pushSettings();
-        if (pendingJournalDates.size) await _pushJournals([...pendingJournalDates]);
-        if (pendingNotebookIds.size) await _pushNotebooks([...pendingNotebookIds]);
-        _lastSyncError = null;
+        const res = await fetch(url);
+        const blob = await res.blob();
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    } catch (e) {
+        console.error("画像ダウンロード失敗(旧形式):", e);
+        return url;
+    }
+}
+
+// ==========================================
+// 4. ブラウザ・ストレージの直接監視 (フック)
+// ==========================================
+
+const _originalSetItem = localStorage.setItem;
+const _originalSetDBData = window.setDBData;
+
+function hookCoreStorage() {
+    localStorage.setItem = function(key, value) {
+        _originalSetItem.call(this, key, value);
+
+        if (['daily_journal_categories', 'daily_journal_types', 'daily_journal_type_slack', 'daily_journal_type_notebook'].includes(key)) {
+            pendingSettingsDirty = true;
+            _persistPending();
+            updateSyncStatusUI();
+            clearTimeout(settingsPushTimer);
+            settingsPushTimer = setTimeout(() => {
+                if (supabaseClient && supabaseUser && !isPulling) pushSettingsToSupabase();
+            }, 1000);
+        }
+    };
+
+    if (_originalSetDBData) {
+        window.setDBData = function(key, value) {
+            // ★完全なBase64データをローカル本体に保存（これは通信状況に関係なく必ず成功する）
+            const promise = _originalSetDBData(key, value);
+
+            // クラウド送信処理へ（送信そのものが失敗しても本体保存には影響しない）
+            if (supabaseClient && supabaseUser && !isPulling) {
+                if (key === 'journalData') {
+                    clearTimeout(journalPushTimer);
+                    const payloadCopy = JSON.parse(JSON.stringify(value));
+                    journalPushTimer = setTimeout(() => pushJournalsToSupabase(payloadCopy), 800);
+                } else if (key === 'notebookData') {
+                    clearTimeout(notebookPushTimer);
+                    const payloadCopy = JSON.parse(JSON.stringify(value));
+                    notebookPushTimer = setTimeout(() => pushNotebooksToSupabase(payloadCopy), 800);
+                }
+            }
+            return promise;
+        };
+    }
+}
+
+// ==========================================
+// 5. データ送信 (Push) 処理
+// ==========================================
+// 方針：「クラウドへの送信が確認できるまでは、常に未送信キューに残す」。
+// これにより、オフライン時の入力や通信断は自動的に検知され、
+// オンライン復帰時・アプリ復帰時・20秒毎のリトライのいずれかで必ず再送される。
+
+async function pushSettingsToSupabase() {
+    if (!supabaseClient || !supabaseUser) return;
+    try {
+        const payload = {
+            user_id: supabaseUser.id,
+            settings_data: {
+                appTypes: typeof appTypes !== 'undefined' ? appTypes : [],
+                categories: typeof categories !== 'undefined' ? categories : [],
+                typeSlackSettings: typeof typeSlackSettings !== 'undefined' ? typeSlackSettings : {},
+                typeNotebookSettings: typeof typeNotebookSettings !== 'undefined' ? typeNotebookSettings : {}
+            },
+            updated_at: new Date().toISOString()
+        };
+        const { error } = await supabaseClient.from('app_settings').upsert(payload);
+        if (error) throw error;
+        pendingSettingsDirty = false;
+    } catch (e) {
+        console.warn("設定の同期に失敗しました（オフライン等）。オンライン復帰後に再送します。", e);
+        // pendingSettingsDirty はtrueのまま残す＝次回リトライ対象
     } finally {
-        _isSyncing = false;
         _persistPending();
         updateSyncStatusUI();
     }
 }
 
-async function _pushSettings() {
-    const ver = _settingsDirtyVer;
-    const { data: remote, error: rErr } = await supabaseClient.from('app_settings').select('*').eq('user_id', supabaseUser.id).maybeSingle();
-    if (rErr) throw rErr;
-    if (remote && await mergeRemoteSettingsRow(remote)) { refreshUIAfterSync(); return; }
-    if (!pendingSettingsDirty) return;
+// force=true の場合、差分比較をスキップして「渡された日付は必ず送信を試みる」
+// （未送信キューからの再送時に使用。再送時にlastSyncedJournalsが信頼できるとは限らないため）
+async function pushJournalsToSupabase(cloudJData, force = false) {
+    if (!supabaseClient || !supabaseUser) return;
+    const payload = [];
 
-    const payload = {
-        user_id: supabaseUser.id,
-        settings_data: {
-            appTypes, categories, typeSlackSettings, typeNotebookSettings,
-            _editedAt: getSettingsEditedAt() || new Date().toISOString()
-        },
-        updated_at: new Date().toISOString()
-    };
-    const { error } = await supabaseClient.from('app_settings').upsert(payload);
-    if (error) throw error;
-    if (ver === _settingsDirtyVer) pendingSettingsDirty = false;
-}
+    for (const dateStr of Object.keys(cloudJData)) {
+        // Base64の状態（本体と同じ状態）のJSONで比較する
+        const currentJson = JSON.stringify(cloudJData[dateStr]);
+        if (!force && currentJson === lastSyncedJournals[dateStr]) continue;
 
-async function _pushJournals(dates) {
-    for (const chunk of _chunk(dates.sort(), 20)) {
-        // 1) クラウドの最新行を読み、先にマージする
-        const { data: rows, error: rErr } = await supabaseClient.from('journals').select('*').in('date_str', chunk);
-        if (rErr) throw rErr;
-        let changedLocal = false;
-        for (const row of rows || []) if (await mergeRemoteJournalRow(row)) changedLocal = true;
-        if (changedLocal) { await persistJournal(); refreshUIAfterSync(); }
+        // ここで「未送信」として即マーク。送信に成功するまではこの印を消さない。
+        pendingJournalDates.add(dateStr);
 
-        // 2) まだクラウドと食い違っている日だけを書き込む
-        const payload = [];
-        const vers = new Map();
-        for (const d of chunk) {
-            if (!pendingJournalDates.has(d)) continue;
-            vers.set(d, _journalDirtyVer.get(d) || 0);
-            const cloudLogs = [];
-            for (const log of (journalData[d] || [])) {
-                const images = [];
-                for (const img of (log.images || [])) images.push(await _toCloudImage(img));
-                cloudLogs.push(Object.assign({}, log, { images }));
+        try {
+            // 通信用のコピーの画像だけをURL化する
+            for (const log of cloudJData[dateStr]) {
+                if (log.images && log.images.length > 0) {
+                    for (let i = 0; i < log.images.length; i++) {
+                        if (log.images[i].startsWith('data:image')) {
+                            log.images[i] = await uploadImageToSupabase(log.images[i]);
+                        }
+                    }
+                }
+                if (log.image && log.image.startsWith('data:image')) {
+                    log.image = await uploadImageToSupabase(log.image);
+                }
             }
+
             payload.push({
-                date_str: d,
+                date_str: dateStr,
                 user_id: supabaseUser.id,
-                log_data: cloudLogs,
-                tombstones: journalTombstones[d] || {},
-                updated_at: new Date().toISOString() // サーバーのトリガーがサーバー時刻で上書きする
+                log_data: cloudJData[dateStr],
+                updated_at: new Date().toISOString()
             });
+        } catch (imgErr) {
+            // 画像アップロード自体がオフライン等で失敗。この日付は未送信のまま次回に回す。
+            console.warn(`画像アップロード失敗のため ${dateStr} は未送信のままにします。`, imgErr);
         }
-        if (!payload.length) continue;
+    }
+
+    _persistPending();
+    updateSyncStatusUI();
+
+    if (payload.length === 0) return;
+
+    try {
         const { error } = await supabaseClient.from('journals').upsert(payload);
         if (error) throw error;
+
+        // ここまで来て初めて「送信済み」に確定する
         for (const p of payload) {
-            if ((_journalDirtyVer.get(p.date_str) || 0) === vers.get(p.date_str)) pendingJournalDates.delete(p.date_str);
+            lastSyncedJournals[p.date_str] = JSON.stringify(p.log_data);
+            pendingJournalDates.delete(p.date_str);
         }
-        _persistPending();
-    }
-}
-
-async function _noteContentForCloud(content) {
-    if (!content || content.indexOf('data:image') === -1) return content || '';
-    const uris = [...new Set(content.match(DATA_URI_RE) || [])];
-    const map = new Map();
-    for (const u of uris) map.set(u, await _toCloudImage(u));
-    return content.replace(DATA_URI_RE, m => map.get(m) || m);
-}
-
-async function _pushNotebooks(ids) {
-    for (const chunk of _chunk(ids, 20)) {
-        const { data: rows, error: rErr } = await supabaseClient.from('notebooks').select('*').in('id', chunk);
-        if (rErr) throw rErr;
-        let changedLocal = false;
-        for (const row of rows || []) if (await mergeRemoteNotebookRow(row)) changedLocal = true;
-        if (changedLocal) { await persistNotebooks(); refreshUIAfterSync(); }
-
-        const payload = [];
-        const vers = new Map();
-        for (const id of chunk) {
-            if (!pendingNotebookIds.has(id)) continue;
-            const n = notebookData.find(x => x.id === id);
-            vers.set(id, _notebookDirtyVer.get(id) || 0);
-            if (n) {
-                payload.push({
-                    id, user_id: supabaseUser.id,
-                    title: n.title || '',
-                    content: await _noteContentForCloud(n.content),
-                    category: n.category || 'ライフログ',
-                    status: n.status || 'archive',
-                    linked_note_ids: n.linkedNoteIds || [],
-                    created_at: n.createdAt || new Date().toISOString(),
-                    edited_at: n.updatedAt || new Date().toISOString(),
-                    deleted: false,
-                    updated_at: new Date().toISOString()
-                });
-            } else if (notebookTombstones[id]) {
-                // 削除の印だけを送る（本文は残さない）
-                payload.push({
-                    id, user_id: supabaseUser.id,
-                    title: '', content: '', category: 'ライフログ', status: 'trash',
-                    linked_note_ids: [],
-                    edited_at: notebookTombstones[id],
-                    deleted: true,
-                    updated_at: new Date().toISOString()
-                });
-            } else {
-                pendingNotebookIds.delete(id); // 送るものがない
-            }
-        }
-        if (!payload.length) continue;
-        payload.forEach(p => _rememberPushed(p.id, p.edited_at));
-        const { error } = await supabaseClient.from('notebooks').upsert(payload);
-        if (error) throw error;
-        for (const p of payload) {
-            if ((_notebookDirtyVer.get(p.id) || 0) === vers.get(p.id)) pendingNotebookIds.delete(p.id);
-        }
-        _persistPending();
-    }
-}
-
-// ==========================================
-// 8. 取得（Pull）
-// ==========================================
-function _cursorKey() { return 'daily_journal_pull_cursor_v2_' + (supabaseUser ? supabaseUser.id : ''); }
-function _getCursor() {
-    try { return JSON.parse(localStorage.getItem(_cursorKey()) || '{}') || {}; } catch (e) { return {}; }
-}
-function _setCursor(c) { localStorage.setItem(_cursorKey(), JSON.stringify(c)); }
-function _maxIso(a, b) { return (!a || (b && Date.parse(b) > Date.parse(a))) ? b : a; }
-
-async function _selectSince(table, since) {
-    const out = [];
-    const size = 500;
-    for (let from = 0; ; from += size) {
-        let q = supabaseClient.from(table).select('*').order('updated_at', { ascending: true }).range(from, from + size - 1);
-        if (since) q = q.gte('updated_at', new Date(Date.parse(since) - PULL_OVERLAP_MS).toISOString());
-        const { data, error } = await q;
-        if (error) throw error;
-        out.push(...(data || []));
-        if (!data || data.length < size) break;
-    }
-    return out;
-}
-
-async function _pull(fullSync) {
-    if (!_canSync()) return;
-    _isSyncing = true; updateSyncStatusUI();
-    try {
-        const cursor = fullSync ? {} : _getCursor();
-        const next = Object.assign({}, _getCursor());
-        let uiChanged = false;
-
-        // 設定
-        const { data: sRow, error: sErr } = await supabaseClient.from('app_settings').select('*').eq('user_id', supabaseUser.id).maybeSingle();
-        if (sErr) throw sErr;
-        if (sRow && sRow.images_cleaned_at) _applyImagesCleanedAt(sRow.images_cleaned_at);
-        if (sRow) { if (await mergeRemoteSettingsRow(sRow)) uiChanged = true; }
-        else if (fullSync && getSettingsEditedAt()) { pendingSettingsDirty = true; }
-
-        // ジャーナル
-        const jRows = await _selectSince('journals', cursor.j);
-        let jChanged = false;
-        for (const row of jRows) {
-            if (await mergeRemoteJournalRow(row)) jChanged = true;
-            next.j = _maxIso(next.j, row.updated_at);
-        }
-        if (fullSync) {
-            // クラウドに行がない日の記録は、未送信として送る
-            const remoteDates = new Set(jRows.map(r => r.date_str));
-            for (const d of Object.keys(journalData)) if (!remoteDates.has(d)) pendingJournalDates.add(d);
-            for (const d of Object.keys(journalTombstones)) if (!remoteDates.has(d) && Object.keys(journalTombstones[d]).length) pendingJournalDates.add(d);
-        }
-        if (jChanged) { await persistJournal(); uiChanged = true; }
-
-        // ノート
-        const nRows = await _selectSince('notebooks', cursor.n);
-        let nChanged = false;
-        for (const row of nRows) {
-            if (await mergeRemoteNotebookRow(row)) nChanged = true;
-            next.n = _maxIso(next.n, row.updated_at);
-        }
-        if (fullSync) {
-            const remoteIds = new Set(nRows.map(r => r.id));
-            for (const n of notebookData) if (!remoteIds.has(n.id)) pendingNotebookIds.add(n.id);
-            for (const id of Object.keys(notebookTombstones)) if (!remoteIds.has(id)) pendingNotebookIds.add(id);
-        }
-        if (nChanged) { await persistNotebooks(); uiChanged = true; }
-
-        // 取得に成功した後にだけカーソルを進める（途中で失敗したら次回同じ範囲をやり直す）
-        _setCursor(next);
-        _persistPending();
-        if (uiChanged) refreshUIAfterSync();
-        _lastSyncError = null;
+    } catch (e) {
+        console.warn("Journal同期に失敗しました（オフライン等）。オンライン復帰後に自動で再送します。", e);
+        // 失敗時は何もしない＝pendingJournalDatesに残ったままになる（重要：ここが従来のバグの修正点）
     } finally {
-        _isSyncing = false;
+        _persistPending();
         updateSyncStatusUI();
     }
 }
 
-// 送信 → 取得 → （マージで差分が出たら）再送信、の順で行う
-function syncNow(fullSync = false) {
-    if (!supabaseClient || !supabaseUser || !navigator.onLine || !isTabActive()) { updateSyncStatusUI(); return Promise.resolve(); }
-    return runExclusive(async () => {
-        if (!(await _ensureSchema())) return;
-        await _pushAll();
-        await _pull(fullSync);
-        if (getPendingCount() > 0) await _pushAll();
-    }).catch(e => _reportSyncError(e));
+async function pushNotebooksToSupabase(cloudNData, force = false) {
+    if (!supabaseClient || !supabaseUser) return;
+    const payload = [];
+
+    for (const cloudNote of cloudNData) {
+        const currentJson = JSON.stringify(cloudNote);
+        if (!force && currentJson === lastSyncedNotebooks[cloudNote.id]) continue;
+
+        pendingNotebookIds.add(cloudNote.id);
+
+        try {
+            if (cloudNote.content && cloudNote.content.includes('data:image')) {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = cloudNote.content;
+                const imgs = tempDiv.querySelectorAll('img[src^="data:image"]');
+                for (let img of imgs) {
+                    const src = img.getAttribute('src');
+                    const ref = await uploadImageToSupabase(src);
+                    if (ref && ref !== src) img.setAttribute('src', ref);
+                }
+                cloudNote.content = tempDiv.innerHTML;
+            }
+
+            payload.push({
+                id: cloudNote.id,
+                user_id: supabaseUser.id,
+                title: cloudNote.title || '',
+                content: cloudNote.content || '',
+                category: cloudNote.category || 'ライフログ',
+                status: cloudNote.status || 'archive',
+                linked_note_ids: cloudNote.linkedNoteIds || [],
+                created_at: cloudNote.createdAt || new Date().toISOString(),
+                updated_at: cloudNote.updatedAt || new Date().toISOString()
+            });
+        } catch (imgErr) {
+            console.warn(`画像アップロード失敗のためノート ${cloudNote.id} は未送信のままにします。`, imgErr);
+        }
+    }
+
+    _persistPending();
+    updateSyncStatusUI();
+
+    if (payload.length === 0) return;
+
+    try {
+        const { error } = await supabaseClient.from('notebooks').upsert(payload);
+        if (error) throw error;
+
+        for (const p of payload) {
+            lastSyncedNotebooks[p.id] = JSON.stringify(cloudNData.find(n => n.id === p.id));
+            pendingNotebookIds.delete(p.id);
+        }
+    } catch (e) {
+        console.warn("Notebook同期に失敗しました（オフライン等）。オンライン復帰後に自動で再送します。", e);
+    } finally {
+        _persistPending();
+        updateSyncStatusUI();
+    }
 }
 
-// 互換用（旧コードから呼ばれていた名前）
-function pullFromSupabase(fullSync = true) { return syncNow(fullSync); }
-function flushPendingPush() { return syncNow(false); }
+// 未送信キューにあるものだけを対象に、最新のローカルデータから再送を試みる
+// （オンライン復帰時・アプリ復帰時・定期リトライ・手動同期ボタンから呼ばれる）
+async function flushPendingPush() {
+    if (!supabaseClient || !supabaseUser || !navigator.onLine) return;
 
-// 旧バージョンでDBに直接入ってしまった画像を、Storage参照に置き換えるために全件を送り直す
+    if (pendingSettingsDirty) {
+        await pushSettingsToSupabase();
+    }
+
+    if (pendingJournalDates.size > 0) {
+        const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
+        const subset = {};
+        for (const d of pendingJournalDates) {
+            if (jData && jData[d]) subset[d] = jData[d];
+            else pendingJournalDates.delete(d); // 該当データがもう存在しない（削除済み等）
+        }
+        if (Object.keys(subset).length > 0) {
+            await pushJournalsToSupabase(JSON.parse(JSON.stringify(subset)), true);
+        }
+    }
+
+    if (pendingNotebookIds.size > 0) {
+        const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
+        // 既にローカルから消えたノートのIDはキューから外す（削除済みなので送りようがない）
+        for (const id of [...pendingNotebookIds]) {
+            if (!nData.some(n => n.id === id)) pendingNotebookIds.delete(id);
+        }
+        const subset = (nData || []).filter(n => pendingNotebookIds.has(n.id));
+        if (subset.length > 0) {
+            await pushNotebooksToSupabase(JSON.parse(JSON.stringify(subset)), true);
+        }
+    }
+
+    _persistPending();
+    updateSyncStatusUI();
+}
+
+// ==========================================
+// 5.5 既存データの再アップロード（DB肥大化の解消）
+// ==========================================
+// 以前の実装や設定ミスにより、画像がStorageへ行かずDBの行に
+// Base64のまま残ってしまっているケースを解消するための手動移行処理。
+// ローカル(IndexedDB)に残っている本来のデータを元に、現在の正しいロジックで
+// 全件を強制的に再送信し、Storageへアップロード＋DB側は参照パスのみに置き換える。
 async function migrateEmbeddedImagesToStorage() {
     if (!supabaseClient || !supabaseUser) { alert("先にSupabaseへログインしてください。"); return; }
     if (!confirm("ローカルに保存されている全データを元に、画像をクラウドStorageへ再アップロードし、データベースを軽量化します。データ量によっては数分かかることがあります。続行しますか？")) return;
 
-    Object.keys(journalData).forEach(d => pendingJournalDates.add(d));
-    notebookData.forEach(n => pendingNotebookIds.add(n.id));
-    _persistPending();
-    await syncNow(false);
-    if (_lastSyncError || _schemaState === 'outdated') alert("移行を完了できませんでした。通信状態とサーバー設定を確認し、時間をおいて再度お試しください。");
-    else alert("移行が完了しました。Supabaseダッシュボードの Storage と Table Editor でサイズをご確認ください。");
+    updateSyncStatusUI();
+    try {
+        const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
+        const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
+
+        await pushJournalsToSupabase(JSON.parse(JSON.stringify(jData)), true);
+        await pushNotebooksToSupabase(JSON.parse(JSON.stringify(nData)), true);
+
+        alert("移行が完了しました。Supabaseダッシュボードの Storage と Table Editor でサイズをご確認ください。");
+    } catch (e) {
+        console.error("移行処理でエラーが発生しました:", e);
+        alert("移行中にエラーが発生しました。通信状態を確認し、時間をおいて再度お試しください。");
+    } finally {
+        updateSyncStatusUI();
+    }
 }
 
 // ==========================================
-// 8.5 クラウドの不要な画像の掃除（手動）
+// 6. クラウドからのデータ取得 (Pull) と 無駄ゼロ復元
 // ==========================================
-// どの記録・ノートからも参照されていない画像を Storage から削除する。
-// ・参照の判定は「サーバー上の全行」で行う（他端末の未取得分も含めて安全に判定）
-// ・直近にアップロードされた画像は、行の書き込み前の可能性があるので消さない（猶予期間）
-// ・掃除した時刻を app_settings に記録し、他の端末の「アップロード済み」記録を無効化させる
-const IMAGE_CLEANUP_GRACE_DAYS = 7;
 
-function _refsInText(text, out) {
-    if (!text) return;
-    const s = typeof text === 'string' ? text : JSON.stringify(text);
-    let m;
-    const re1 = /SBIMG:([A-Za-z0-9_\/.-]+)/g;
-    while ((m = re1.exec(s))) out.add(m[1]);
-    const re2 = /\/storage\/v1\/object\/public\/images\/([^"'<>\s\\]+)/g;
-    while ((m = re2.exec(s))) out.add(decodeURIComponent(m[1]));
-}
+// ローカルに保存されている画像をハッシュ辞書としてまとめる（照合用）
+async function extractLocalImagesDict() {
+    const dict = {};
+    const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
+    const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
 
-async function _selectAllColumns(table, cols) {
-    const out = [];
-    const size = 500;
-    for (let from = 0; ; from += size) {
-        const { data, error } = await supabaseClient.from(table).select(cols).order(table === 'journals' ? 'date_str' : 'id', { ascending: true }).range(from, from + size - 1);
-        if (error) throw error;
-        out.push(...(data || []));
-        if (!data || data.length < size) break;
-    }
-    return out;
-}
-
-async function _listAllImages(folder) {
-    const out = [];
-    const size = 1000;
-    for (let offset = 0; ; offset += size) {
-        const { data, error } = await supabaseClient.storage.from('images').list(folder, { limit: size, offset, sortBy: { column: 'name', order: 'asc' } });
-        if (error) throw error;
-        out.push(...(data || []).filter(o => o && o.id !== null && o.name)); // フォルダ行を除外
-        if (!data || data.length < size) break;
-    }
-    return out;
-}
-
-async function cleanupUnusedCloudImages() {
-    if (!supabaseClient || !supabaseUser) { alert("先にSupabaseへログインしてください。"); return; }
-    if (!navigator.onLine) { alert("オフラインのため実行できません。"); return; }
-    if (!confirm(`クラウドの画像のうち、どの記録・ノートからも使われていないものを削除します。\n（${IMAGE_CLEANUP_GRACE_DAYS}日以内にアップロードされた画像は対象外です）\n\n先に未送信の変更を送信してから確認します。続行しますか？`)) return;
-
-    let result = null;
-    await runExclusive(async () => {
-        if (!(await _ensureSchema())) { result = { error: 'schema' }; return; }
-        const probe = await supabaseClient.from('app_settings').select('images_cleaned_at').limit(1);
-        if (probe.error) { result = { error: 'schema' }; return; }
-
-        await _pushAll();
-        if (getPendingCount() > 0) { result = { error: 'pending' }; return; }
-
-        const used = new Set();
-        for (const r of await _selectAllColumns('journals', 'date_str,log_data')) _refsInText(r.log_data, used);
-        for (const r of await _selectAllColumns('notebooks', 'id,content')) _refsInText(r.content, used);
-
-        const uid = supabaseUser.id;
-        const cutoff = Date.now() - IMAGE_CLEANUP_GRACE_DAYS * 86400000;
-        const objects = await _listAllImages(uid);
-        const targets = objects.filter(o => {
-            const path = `${uid}/${o.name}`;
-            if (used.has(path)) return false;
-            const t = Date.parse(o.created_at || o.updated_at || '');
-            return !isNaN(t) && t < cutoff;
-        });
-        const bytes = targets.reduce((a, o) => a + ((o.metadata && o.metadata.size) || 0), 0);
-        result = { total: objects.length, used: used.size, targets, bytes };
-    }).catch(e => { result = { error: e }; });
-
-    if (!result || result.error) {
-        if (result && result.error === 'schema') alert("この機能にはサーバー側の更新が必要です。\n設定 > クラウド のSQLをもう一度実行してください。");
-        else if (result && result.error === 'pending') alert("未送信の変更を送信できなかったため中止しました。通信状態を確認してから再度お試しください。");
-        else alert("確認中にエラーが発生しました: " + ((result && result.error && result.error.message) || result && result.error));
-        return;
-    }
-    if (!result.targets.length) { alert(`削除できる不要な画像はありません。（クラウドの画像 ${result.total} 件）`); return; }
-    const mb = (result.bytes / 1024 / 1024).toFixed(1);
-    if (!confirm(`不要な画像が ${result.targets.length} 件（約 ${mb} MB）見つかりました。\nクラウドから削除しますか？（端末内の画像には影響しません）`)) return;
-
-    let removed = 0;
-    await runExclusive(async () => {
-        const uid = supabaseUser.id;
-        const paths = result.targets.map(o => `${uid}/${o.name}`);
-        for (const chunk of _chunk(paths, 100)) {
-            const { error } = await supabaseClient.storage.from('images').remove(chunk);
-            if (error) throw error;
-            removed += chunk.length;
-            const map = _uploadedMap();
-            for (const p of chunk) { const m = p.match(/img_([a-f0-9]{64})\./); if (m) delete map[m[1]]; }
-            localStorage.setItem(_uploadedKey(), JSON.stringify(map));
+    // ジャーナルの画像を抽出
+    for (const d of Object.keys(jData)) {
+        for (const log of jData[d]) {
+            if (log.images) {
+                for (const b64 of log.images) {
+                    if (b64.startsWith('data:image')) {
+                        const h = await getHash(b64);
+                        dict[h] = b64;
+                    }
+                }
+            }
+            if (log.image && log.image.startsWith('data:image')) {
+                const h = await getHash(log.image);
+                dict[h] = log.image;
+            }
         }
-        // 他の端末に「掃除した」ことを知らせる
-        const now = new Date().toISOString();
-        const { data: row } = await supabaseClient.from('app_settings').select('user_id').eq('user_id', uid).maybeSingle();
-        if (row) {
-            const { error } = await supabaseClient.from('app_settings').update({ images_cleaned_at: now }).eq('user_id', uid);
-            if (error) throw error;
-        } else {
-            const { error } = await supabaseClient.from('app_settings').upsert({
-                user_id: uid, images_cleaned_at: now,
-                settings_data: { appTypes, categories, typeSlackSettings, typeNotebookSettings, _editedAt: getSettingsEditedAt() }
-            });
-            if (error) throw error;
+    }
+    // ノートブックの画像を抽出
+    for (const note of nData) {
+        if (note.content && note.content.includes('data:image')) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = note.content;
+            const imgs = tempDiv.querySelectorAll('img[src^="data:image"]');
+            for (let img of imgs) {
+                const h = await getHash(img.src);
+                dict[h] = img.src;
+            }
         }
-        localStorage.setItem(_validFromKey(), now);
-    }).catch(e => { alert(`削除の途中でエラーが発生しました（${removed} 件は削除済み）: ` + (e && e.message ? e.message : e)); removed = -1; });
-    if (removed >= 0) alert(`${removed} 件の不要な画像をクラウドから削除しました。`);
+    }
+    return dict;
+}
+
+function applySettingsData(s) {
+    if (s.appTypes && typeof appTypes !== 'undefined') {
+        appTypes.splice(0, appTypes.length, ...s.appTypes);
+        _originalSetItem.call(localStorage, 'daily_journal_types', JSON.stringify(appTypes));
+    }
+    if (s.categories && typeof categories !== 'undefined') {
+        categories.splice(0, categories.length, ...s.categories);
+        _originalSetItem.call(localStorage, 'daily_journal_categories', JSON.stringify(categories));
+    }
+    if (s.typeSlackSettings && typeof typeSlackSettings !== 'undefined') {
+        Object.keys(typeSlackSettings).forEach(k => delete typeSlackSettings[k]);
+        Object.assign(typeSlackSettings, s.typeSlackSettings);
+        _originalSetItem.call(localStorage, 'daily_journal_type_slack', JSON.stringify(typeSlackSettings));
+    }
+    if (s.typeNotebookSettings && typeof typeNotebookSettings !== 'undefined') {
+        Object.keys(typeNotebookSettings).forEach(k => delete typeNotebookSettings[k]);
+        Object.assign(typeNotebookSettings, s.typeNotebookSettings);
+        _originalSetItem.call(localStorage, 'daily_journal_type_notebook', JSON.stringify(typeNotebookSettings));
+    }
+}
+
+// クラウドの1行分（1日分のjournal）をローカルへ反映。呼び出し元でrender/保存を行う。
+async function mergeJournalRow(row, localImagesDict) {
+    const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
+    const downloadedLogs = row.log_data;
+
+    // クラウド参照（新形式:SBIMG:接頭辞 / 旧形式:http公開URL）かどうかを判定
+    const isCloudRef = (v) => typeof v === 'string' && (v.startsWith(SB_IMG_PREFIX) || v.startsWith('http'));
+    const resolveCloudRef = (v) => v.startsWith(SB_IMG_PREFIX) ? downloadImageFromStorage(v) : downloadImageToBase64(v);
+
+    for (const log of downloadedLogs) {
+        if (log.images && log.images.length > 0) {
+            for (let i = 0; i < log.images.length; i++) {
+                if (isCloudRef(log.images[i])) {
+                    const match = log.images[i].match(/img_([a-f0-9]+)\./);
+                    if (match && match[1] && localImagesDict[match[1]]) {
+                        log.images[i] = localImagesDict[match[1]]; // 通信回避！ローカルデータで復元
+                    } else {
+                        log.images[i] = await resolveCloudRef(log.images[i]); // 新規画像のみダウンロード（署名付きURL経由）
+                    }
+                }
+            }
+        }
+        if (isCloudRef(log.image)) {
+            const match = log.image.match(/img_([a-f0-9]+)\./);
+            if (match && match[1] && localImagesDict[match[1]]) {
+                log.image = localImagesDict[match[1]];
+            } else {
+                log.image = await resolveCloudRef(log.image);
+            }
+        }
+    }
+
+    jData[row.date_str] = downloadedLogs;
+    lastSyncedJournals[row.date_str] = JSON.stringify(downloadedLogs);
+    if (typeof dateList !== 'undefined' && !dateList.includes(row.date_str)) dateList.push(row.date_str);
+}
+
+// クラウドの1行分（1ノート）をローカルへ反映。反映した場合はtrueを返す。
+async function mergeNotebookRow(row, localImagesDict) {
+    const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
+    const idx = nData.findIndex(n => n.id === row.id);
+    if (idx !== -1 && new Date(nData[idx].updatedAt) >= new Date(row.updated_at)) return false;
+
+    let content = row.content;
+    if (content && content.includes('<img')) {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = content;
+        // data:image（未アップロード分）以外の img はすべて「クラウド参照」とみなす
+        const imgs = tempDiv.querySelectorAll('img:not([src^="data:image"])');
+        for (let img of imgs) {
+            const src = img.getAttribute('src') || '';
+            const match = src.match(/img_([a-f0-9]+)\./);
+            if (match && match[1] && localImagesDict[match[1]]) {
+                img.setAttribute('src', localImagesDict[match[1]]); // 通信回避！ローカルデータで復元
+            } else if (src.startsWith(SB_IMG_PREFIX)) {
+                const b64 = await downloadImageFromStorage(src); // 非公開Storageから署名付きURL経由で取得
+                if (b64) img.setAttribute('src', b64);
+            } else if (src.includes('/storage/v1/object/public/images/')) {
+                const b64 = await downloadImageToBase64(src); // 旧・公開URL形式の互換
+                if (b64) img.setAttribute('src', b64);
+            }
+        }
+        content = tempDiv.innerHTML;
+    }
+
+    const noteObj = {
+        id: row.id, title: row.title, content: content, category: row.category,
+        status: row.status, linkedNoteIds: row.linked_note_ids || [],
+        createdAt: row.created_at, updatedAt: row.updated_at
+    };
+
+    if (idx !== -1) nData[idx] = noteObj;
+    else nData.push(noteObj);
+
+    lastSyncedNotebooks[row.id] = JSON.stringify(noteObj);
+    return true;
 }
 
 function refreshUIAfterSync() {
     if (typeof updateCategoryButtonUI === 'function') updateCategoryButtonUI();
-    const settingsOpen = document.getElementById('settingsModal') && document.getElementById('settingsModal').classList.contains('active');
-    if (settingsOpen) {
-        if (typeof renderSettingsTypeList === 'function') renderSettingsTypeList();
-        if (typeof renderSettingsCategoryList === 'function') renderSettingsCategoryList();
+    if (typeof renderSettingsTypeList === 'function') renderSettingsTypeList();
+    if (typeof renderSettingsCategoryList === 'function') renderSettingsCategoryList();
+    if (typeof renderRightCards === 'function') renderRightCards();
+    if (typeof renderNotebookSidebar === 'function' && typeof calendarScope !== 'undefined' && calendarScope === 'notebooks') renderNotebookSidebar();
+    if (typeof renderMiniCalendar === 'function' && typeof sidebarMode !== 'undefined' && sidebarMode === 'cal' && typeof calendarScope !== 'undefined' && calendarScope !== 'notebooks') renderMiniCalendar();
+}
+
+// fullSync=true: 全件取得（初回ログイン・手動同期時のみ。通信量は増えるが確実）
+// fullSync=false: 前回同期以降に更新された行だけを取得（自動再同期はこちら。通信量を節約）
+async function pullFromSupabase(fullSync = true) {
+    if (!supabaseClient || !supabaseUser) return;
+    if (isPulling) return; // 二重実行防止
+    isPulling = true;
+    updateSyncStatusUI();
+
+    const requestedAt = new Date().toISOString();
+    const cursor = fullSync ? null : localStorage.getItem('daily_journal_last_pull_at');
+
+    try {
+        console.log(fullSync ? "クラウドと全件を照合中..." : "クラウドの更新分のみ照合中...(通信量節約)");
+
+        // 本体にある画像リストの目次（ハッシュ辞典）を作成
+        const localImagesDict = await extractLocalImagesDict();
+
+        // --- 1. 設定の取得 ---
+        const { data: sDb } = await supabaseClient.from('app_settings').select('*').eq('user_id', supabaseUser.id).maybeSingle();
+        if (sDb && sDb.settings_data) {
+            applySettingsData(sDb.settings_data);
+        } else if (fullSync) {
+            pushSettingsToSupabase();
+        }
+
+        // --- 2. Journals の取得（差分取得: 前回同期以降に更新された分のみ） ---
+        let jQuery = supabaseClient.from('journals').select('*');
+        if (cursor) jQuery = jQuery.gte('updated_at', cursor);
+        const { data: jDb } = await jQuery;
+
+        if (jDb && jDb.length > 0) {
+            for (const row of jDb) {
+                // 自分がこの内容を送信済みなら（エコー）、無駄なダウンロード・再描画を避けてスキップ
+                if (JSON.stringify(row.log_data) === lastSyncedJournals[row.date_str]) continue;
+                await mergeJournalRow(row, localImagesDict);
+            }
+            if (typeof dateList !== 'undefined') dateList.sort();
+            const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
+            await _originalSetDBData('journalData', jData);
+        }
+
+        // --- 3. Notebooks の取得（差分取得） ---
+        let nQuery = supabaseClient.from('notebooks').select('*');
+        if (cursor) nQuery = nQuery.gte('updated_at', cursor);
+        const { data: nDb } = await nQuery;
+
+        if (nDb && nDb.length > 0) {
+            let updated = false;
+            for (const row of nDb) {
+                const changed = await mergeNotebookRow(row, localImagesDict);
+                if (changed) updated = true;
+            }
+            if (updated) {
+                const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
+                await _originalSetDBData('notebookData', nData);
+            }
+        }
+
+        // --- 4. 画面の再描画 ---
+        refreshUIAfterSync();
+
+        // 次回の差分取得用カーソルを更新（時計のズレに備えて少し余裕を持たせる）
+        localStorage.setItem('daily_journal_last_pull_at', new Date(new Date(requestedAt).getTime() - 10000).toISOString());
+
+        console.log("クラウド同期が完了しました。");
+    } catch (e) {
+        console.error("Pull同期エラー:", e);
+    } finally {
+        isPulling = false;
+        updateSyncStatusUI();
     }
-    // ノートを編集中は、カードを描き直すと入力中の内容が消えるので描画を控える（編集終了時に描画される）
-    const editingNote = typeof currentActiveEditorNotebookId !== 'undefined' && currentActiveEditorNotebookId;
-    if (!editingNote && typeof renderRightCards === 'function') renderRightCards();
-    if (typeof renderNotebookSidebar === 'function' && calendarScope === 'notebooks') renderNotebookSidebar();
-    if (typeof renderMiniCalendar === 'function' && sidebarMode === 'cal' && calendarScope !== 'notebooks') renderMiniCalendar();
 }
 
 // ==========================================
-// 9. Supabase Realtime（他デバイスの更新を即座に受け取る）
+// 7. Supabase Realtime（他デバイスの更新を即座に受け取る）
 // ==========================================
-// 前提: Supabase管理画面の Database > Replication で journals / notebooks / app_settings の Realtime を有効化。
-// 有効化していない場合も、アプリ復帰時・オンライン復帰時の差分取得で反映されます。
+// 前提: Supabase管理画面の Database > Replication で
+// journals / notebooks / app_settings テーブルの Realtime を有効化しておく必要があります。
+// これを行わない場合でも、画面復帰時の差分取得（上記6番）により、多少遅れて反映されます。
 
 function ensureRealtimeSubscribed() {
-    if (!isTabActive()) return;
     if (!realtimeChannel) subscribeRealtime();
 }
 
 function subscribeRealtime() {
     if (!supabaseClient || !supabaseUser) return;
     unsubscribeRealtime();
+
     try {
         realtimeChannel = supabaseClient
             .channel('daily-journal-sync-' + supabaseUser.id)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'journals', filter: `user_id=eq.${supabaseUser.id}` }, payload => {
-                if (payload.new && payload.new.date_str) _enqueueRemote('journal', payload.new);
+                if (payload.new && payload.new.date_str) handleRemoteJournalRow(payload.new);
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'notebooks', filter: `user_id=eq.${supabaseUser.id}` }, payload => {
-                if (payload.new && payload.new.id) _enqueueRemote('notebook', payload.new);
+                if (payload.new && payload.new.id) handleRemoteNotebookRow(payload.new);
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings', filter: `user_id=eq.${supabaseUser.id}` }, payload => {
-                if (payload.new && payload.new.settings_data) _enqueueRemote('settings', payload.new);
+                if (payload.new && payload.new.settings_data) handleRemoteSettingsRow(payload.new);
             })
             .subscribe();
     } catch (e) {
@@ -1152,17 +844,52 @@ function unsubscribeRealtime() {
     realtimeChannel = null;
 }
 
-// 受け取った変更は捨てずに同期の列に並べる（取得中でも失われない）
-function _enqueueRemote(kind, row) {
-    runExclusive(async () => {
-        if (_schemaState === 'outdated' || !isTabActive()) return;
-        let changed = false;
-        if (kind === 'journal') { changed = await mergeRemoteJournalRow(row); if (changed) await persistJournal(); }
-        else if (kind === 'notebook') { changed = await mergeRemoteNotebookRow(row); if (changed) await persistNotebooks(); }
-        else if (kind === 'settings') { changed = await mergeRemoteSettingsRow(row); }
-        _persistPending();
-        if (changed) refreshUIAfterSync();
-        if (getPendingCount() > 0) schedulePush();
-        updateSyncStatusUI();
-    }).catch(e => _reportSyncError(e));
+async function handleRemoteJournalRow(row) {
+    if (isPulling) return;
+    if (JSON.stringify(row.log_data) === lastSyncedJournals[row.date_str]) return; // 自分のエコーは無視
+
+    isPulling = true;
+    try {
+        const localImagesDict = await extractLocalImagesDict();
+        await mergeJournalRow(row, localImagesDict);
+        if (typeof dateList !== 'undefined') dateList.sort();
+        const jData = typeof journalData !== 'undefined' ? journalData : window.journalData;
+        await _originalSetDBData('journalData', jData);
+        refreshUIAfterSync();
+    } catch (e) {
+        console.error("Realtime反映エラー(journals):", e);
+    } finally {
+        isPulling = false;
+    }
+}
+
+async function handleRemoteNotebookRow(row) {
+    if (isPulling) return;
+    isPulling = true;
+    try {
+        const localImagesDict = await extractLocalImagesDict();
+        const changed = await mergeNotebookRow(row, localImagesDict);
+        if (changed) {
+            const nData = typeof notebookData !== 'undefined' ? notebookData : window.notebookData;
+            await _originalSetDBData('notebookData', nData);
+            refreshUIAfterSync();
+        }
+    } catch (e) {
+        console.error("Realtime反映エラー(notebooks):", e);
+    } finally {
+        isPulling = false;
+    }
+}
+
+async function handleRemoteSettingsRow(row) {
+    if (isPulling) return;
+    isPulling = true;
+    try {
+        applySettingsData(row.settings_data);
+        refreshUIAfterSync();
+    } catch (e) {
+        console.error("Realtime反映エラー(app_settings):", e);
+    } finally {
+        isPulling = false;
+    }
 }
