@@ -5,6 +5,43 @@
 let notebookSearchQuery = "";
 let currentActiveEditorNotebookId = null;
 let notebookEditorOriginalBackup = null; // 編集前のバックアップ用（キャンセル時に完全復旧）
+const freshNotebookIds = new Set(); // ＋ボタンで作成し、まだ一度も保存確定していないノート
+const notebookEditConflicts = new Map(); // 編集中に他端末で削除されたノート（id -> {deleted, editedAt}）
+const _conflictCopiedKeys = new Set();
+
+// 同期モジュールから呼ばれる：このノートを編集中なら、編集開始時点の更新時刻を返す（編集中でなければ null）
+function getEditingNotebookBase(id) {
+    if (currentActiveEditorNotebookId !== id || !notebookEditorOriginalBackup || notebookEditorOriginalBackup.id !== id) return null;
+    return notebookEditorOriginalBackup.baseUpdatedAt || '';
+}
+
+// 編集中に他端末で同じノートが更新・削除されたとき
+// - 更新：画面の編集内容は守りつつ、相手の版を「（他の端末の版）」として別ノートに保存（どちらも失わない）
+// - 削除：保存すれば編集内容で復元、キャンセルすれば削除を受け入れる
+async function handleRemoteEditConflict(id, remote) {
+    if (remote.deleted) {
+        notebookEditConflicts.set(id, remote);
+        showToast('編集中のノートが他の端末で削除されました。「保存」すると編集内容で復元され、「キャンセル」すると削除されます。');
+        return;
+    }
+    const key = id + '@' + remote.updatedAt;
+    if (_conflictCopiedKeys.has(key)) return;
+    _conflictCopiedKeys.add(key);
+    const now = new Date().toISOString();
+    const copy = {
+        id: generateId('nb_'),
+        title: `${remote.title || '無題のノート'}（他の端末の版）`,
+        content: remote.content || '',
+        category: remote.category || 'ライフログ',
+        status: remote.status === 'trash' ? 'archive' : (remote.status || 'active'),
+        linkedNoteIds: [],
+        createdAt: now,
+        updatedAt: now
+    };
+    notebookData.push(copy);
+    await saveNotebookData();
+    showToast(`編集中に、このノートが他の端末で更新されました。相手の版は「${copy.title}」として別ノートに保存しました。`);
+}
 
 // Undo / Redo 履歴管理（直近10件まで保持）
 let editorHistoryStack = [];
@@ -189,10 +226,96 @@ function selectNotebookViewFromModal(mode) {
     closeModal('viewScopeModal');
 }
 
+// ==========================================
+// ノート本文HTMLのサニタイズ（XSS対策）
+// ==========================================
+// ノート本文はペーストや他端末からの同期で外部由来のHTMLが入りうるため、
+// 画面に出す前・保存する前に必ず sanitizeNoteHtml を通す。
+// アプリ自身が本文に埋め込むインラインハンドラ（画像サイズ切替・表の行列追加）だけは、完全一致で許可する。
+const _NOTE_HANDLER_ALLOW = [
+    /^event\.stopPropagation\(\);?$/,
+    /^event\.preventDefault\(\);?$/,
+    /^setNotebookImageSize\(this, 'size-(full|half|quarter)', '[A-Za-z0-9_-]{1,100}'\)$/,
+    /^removeNotebookImage\(this, '[A-Za-z0-9_-]{1,100}'\)$/,
+    /^handleNotebookTableAdd(Column|Row)Click\(this, event\);?$/
+];
+const _NOTE_URI_RE = /^(?:(?:(?:f|ht)tps?|mailto|tel|idbimg|sbimg):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+const _NOTE_FORBID_TAGS = ['script', 'style', 'iframe', 'frame', 'frameset', 'object', 'embed', 'link', 'meta', 'base', 'form', 'svg', 'math', 'template', 'noscript'];
+let _purifyReady = false;
+
+function _isAllowedNoteHandler(v) {
+    const t = (v || '').trim();
+    return _NOTE_HANDLER_ALLOW.some(re => re.test(t));
+}
+
+function _setupPurify() {
+    if (_purifyReady || !window.DOMPurify || !DOMPurify.isSupported) return _purifyReady;
+    DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+        const name = (data.attrName || '').toLowerCase();
+        if (name.startsWith('on')) {
+            if (_isAllowedNoteHandler(data.attrValue)) data.forceKeepAttr = true;
+            else data.keepAttr = false;
+        } else if (name === 'contenteditable') {
+            if (String(data.attrValue).toLowerCase() === 'false') data.forceKeepAttr = true;
+            else data.keepAttr = false;
+        }
+    });
+    _purifyReady = true;
+    return true;
+}
+
+// DOMPurify が読み込めなかった場合（オフライン初回など）の保守的なフォールバック
+function _fallbackSanitize(html) {
+    const tpl = document.createElement('template'); // template内は不活性（画像読込もスクリプト実行もしない）
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll(_NOTE_FORBID_TAGS.join(',')).forEach(el => el.remove());
+    tpl.content.querySelectorAll('*').forEach(el => {
+        for (const attr of Array.from(el.attributes)) {
+            const n = attr.name.toLowerCase();
+            if (n.startsWith('on')) { if (!_isAllowedNoteHandler(attr.value)) el.removeAttribute(attr.name); }
+            else if (n === 'contenteditable') { if (attr.value.toLowerCase() !== 'false') el.removeAttribute(attr.name); }
+            else if (['href', 'src', 'xlink:href', 'action', 'formaction', 'srcset', 'background', 'poster'].includes(n)) {
+                const v = attr.value.replace(/[\u0000-\u0020]/g, '');
+                const ok = (n === 'src' && /^data:image\//i.test(v)) || (_NOTE_URI_RE.test(v) && !/^(javascript|vbscript|data):/i.test(v));
+                if (!ok || n === 'srcset') el.removeAttribute(attr.name);
+            }
+        }
+    });
+    return tpl.innerHTML;
+}
+
+let _noteSanitizeCache = new Map();
+function sanitizeNoteHtml(html) {
+    if (!html) return '';
+    if (typeof html !== 'string') return '';
+    const cached = _noteSanitizeCache.get(html);
+    if (cached !== undefined) return cached;
+    let out;
+    if (_setupPurify()) {
+        out = DOMPurify.sanitize(html, {
+            FORBID_TAGS: _NOTE_FORBID_TAGS,
+            ADD_ATTR: ['target', 'contenteditable'],
+            ALLOWED_URI_REGEXP: _NOTE_URI_RE
+        });
+    } else {
+        out = _fallbackSanitize(html);
+    }
+    if (_noteSanitizeCache.size > 400) _noteSanitizeCache = new Map();
+    _noteSanitizeCache.set(html, out);
+    _noteSanitizeCache.set(out, out);
+    return out;
+}
+
+// 不活性な <template> で解析する（div.innerHTML と違い、img onerror 等が発火しない）
+function _parseInert(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html || '';
+    return tpl;
+}
+
 function stripHtml(html) {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    return tmp.textContent || tmp.innerText || '';
+    if (!html) return '';
+    return _parseInert(html).content.textContent || '';
 }
 
 function openNotebookLinked(id) {
@@ -224,6 +347,7 @@ function openNotebookLinked(id) {
         const cardSlide = scroller ? scroller.querySelector(`[data-id="${id}"]`) : null;
         
         if (cardSlide && scroller) {
+            ensureCardContentRendered(scroller, Number(cardSlide.dataset.index) || 0);
             scroller.scrollTo({ left: cardSlide.offsetLeft, behavior: 'auto' });
             const targetNote = notebookData.find(n => n.id === id);
             if (targetNote) {
@@ -299,10 +423,9 @@ function buildNotebookCategoryBadge(n) {
 
 function cleanNotebookPreviewHtml(html) {
     if (!html) return '';
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    tmp.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-    return tmp.innerHTML;
+    const tpl = _parseInert(sanitizeNoteHtml(html));
+    tpl.content.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+    return tpl.innerHTML;
 }
 
 function createNotebookCardElement(n) {
@@ -1042,6 +1165,19 @@ function buildNotebookToolbarHtml(n) {
     `;
 }
 
+// カードビューは全ノートの枠だけ作り、本文は表示中のカードの前後だけ描画する（ノート数が多くても軽くするため）
+const CARD_RENDER_RADIUS = 2;
+function ensureCardContentRendered(scroller, index) {
+    if (!scroller) return;
+    const slides = scroller.children;
+    for (let i = Math.max(0, index - CARD_RENDER_RADIUS); i <= Math.min(slides.length - 1, index + CARD_RENDER_RADIUS); i++) {
+        const ph = slides[i].querySelector('.nb-lazy-content[data-lazy-id]');
+        if (!ph) continue;
+        const note = notebookData.find(n => n.id === ph.dataset.lazyId);
+        if (note) ph.outerHTML = buildNotebookContentHtml(note); else ph.remove();
+    }
+}
+
 function renderCardViewMode(container, filteredNotebooks, filterBadgeHtml) {
     if (currentNotebookIndex >= filteredNotebooks.length || currentNotebookIndex < 0) {
         currentNotebookIndex = 0;
@@ -1106,7 +1242,7 @@ function renderCardViewMode(container, filteredNotebooks, filterBadgeHtml) {
                 ${buildNotebookToolbarHtml(n)}
 
                 <div class="logs-container-wrapper" id="nb_logs_wrapper_${n.id}" style="padding: 4px 2px;" ondblclick="handleNotebookContainerDblClick(event, '${n.id}')">
-                    ${buildNotebookContentHtml(n)}
+                    ${Math.abs(idx - currentNotebookIndex) <= CARD_RENDER_RADIUS ? buildNotebookContentHtml(n) : `<div class="nb-lazy-content" data-lazy-id="${n.id}"></div>`}
                 </div>
             </div>
         `;
@@ -1146,6 +1282,7 @@ function setupConnectedSwipeListener(scroller, filteredNotebooks) {
             if (!w) return;
             const newIndex = Math.round(scroller.scrollLeft / w);
             if (newIndex >= 0 && newIndex < filteredNotebooks.length) {
+                ensureCardContentRendered(scroller, newIndex);
                 if (currentNotebookIndex !== newIndex) {
                     currentNotebookIndex = newIndex;
                     const cNote = filteredNotebooks[currentNotebookIndex];
@@ -1836,10 +1973,7 @@ function buildNotebookContentHtml(n) {
     if (!cleanContent.trim()) {
         cleanContent = '';
     } else {
-        const tmp = document.createElement('div');
-        tmp.innerHTML = cleanContent;
-        tmp.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-        cleanContent = tmp.innerHTML;
+        cleanContent = cleanNotebookPreviewHtml(cleanContent);
     }
 
     if (window.IS_READONLY_MODE) {
@@ -2005,12 +2139,13 @@ function generateNotebookHtmlDocument(n) {
     const updatedDate = n.updatedAt ? new Date(n.updatedAt).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
     const dateStr = updatedDate ? `更新: ${updatedDate}` : (createdDate ? `作成: ${createdDate}` : '');
 
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = n.content || '';
+    const tempDiv = _parseInert(sanitizeNoteHtml(n.content || '')).content;
     tempDiv.querySelectorAll('.nb-img-controls').forEach(el => el.remove());
     tempDiv.querySelectorAll('.nb-img-wrapper').forEach(el => el.classList.remove('selected'));
     tempDiv.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-    const cleanContent = tempDiv.innerHTML;
+    tempDiv.querySelectorAll('*').forEach(el => { for (const a of Array.from(el.attributes)) if (a.name.toLowerCase().startsWith('on')) el.removeAttribute(a.name); });
+    const _wrap = document.createElement('template'); _wrap.content.appendChild(tempDiv);
+    const cleanContent = _wrap.innerHTML;
 
     return `<!DOCTYPE html>
 <html lang="ja">
@@ -2327,8 +2462,9 @@ async function handleNotebookPaste(e, id) {
     if (htmlData && (htmlData.includes('<table') || htmlData.includes('<blockquote') || htmlData.includes('border-left'))) {
         e.preventDefault();
 
+        // クリップボードのHTMLは外部由来なので、整形前にサニタイズする（img onerror 等を除去）
         const parser = new DOMParser();
-        const doc = parser.parseFromString(htmlData, 'text/html');
+        const doc = parser.parseFromString(sanitizeNoteHtml(htmlData), 'text/html');
 
         const quotes = doc.querySelectorAll('blockquote, [style*="border-left"]');
         quotes.forEach(q => {
@@ -2553,8 +2689,7 @@ function getDirectChildBlock(container, node) {
 }
 
 function stripNestedBlockTags(html, tagNames) {
-    const temp = document.createElement('div');
-    temp.innerHTML = html;
+    const temp = _parseInert(html).content;
     const selector = tagNames.join(', ');
     temp.querySelectorAll(selector).forEach(elToUnwrap => {
         while (elToUnwrap.firstChild) {
@@ -2562,7 +2697,8 @@ function stripNestedBlockTags(html, tagNames) {
         }
         elToUnwrap.remove();
     });
-    return temp.innerHTML;
+    const out = document.createElement('template'); out.content.appendChild(temp);
+    return out.innerHTML;
 }
 
 function setNotebookBlockFormat(id, tag) {
@@ -2730,7 +2866,7 @@ function breakOutOfSpecialBlock(blockNode, id) {
 
 function handleNotebookKeyDown(e, id) {
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    const isCtrl = isMac ? event.metaKey : event.ctrlKey;
+    const isCtrl = isMac ? e.metaKey : e.ctrlKey;
 
     if (isCtrl && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
@@ -3160,6 +3296,9 @@ function handleNotebookContentDblClick(event, id) {
 
 function enableNotebookEdit(id, focusTarget = 'content') {
     currentActiveEditorNotebookId = id;
+    const _scroller = document.getElementById('connectedCenterScroller');
+    const _slide = _scroller ? _scroller.querySelector(`[data-id="${id}"]`) : null;
+    if (_slide) ensureCardContentRendered(_scroller, Number(_slide.dataset.index) || 0);
 
     const note = notebookData.find(n => n.id === id);
     if (note) {
@@ -3167,7 +3306,9 @@ function enableNotebookEdit(id, focusTarget = 'content') {
             id: note.id,
             title: note.title || '',
             content: note.content || '',
-            isNew: (!note.title && !note.content)
+            // 「新規」は＋ボタンで作った直後のノートだけ（既存の空ノートをキャンセルで消さない）
+            isNew: freshNotebookIds.has(note.id),
+            baseUpdatedAt: note.updatedAt || ''
         };
 
         clearTimeout(historyDebounceTimer);
@@ -3230,6 +3371,8 @@ async function saveNotebookEdit(id) {
             notebookData[idx].content = contentArea.innerHTML;
         }
         notebookData[idx].updatedAt = new Date().toISOString();
+        freshNotebookIds.delete(id);
+        notebookEditConflicts.delete(id);
         
         await saveNotebookData();
         
@@ -3260,8 +3403,26 @@ async function cancelNotebookEdit(id) {
     const backup = notebookEditorOriginalBackup;
     const idx = notebookData.findIndex(n => n.id === id);
 
+    // 編集中に他端末で削除されていた場合、キャンセル＝削除を受け入れる
+    const conflict = notebookEditConflicts.get(id);
+    notebookEditConflicts.delete(id);
+    if (conflict && conflict.deleted && idx !== -1) {
+        notebookData.splice(idx, 1);
+        notebookData.forEach(o => { if (Array.isArray(o.linkedNoteIds) && o.linkedNoteIds.includes(id)) o.linkedNoteIds = o.linkedNoteIds.filter(x => x !== id); });
+        notebookTombstones[id] = conflict.editedAt;
+        rebaselineNotebooks(notebookData.map(n => n.id).concat([id]));
+        await persistNotebooks();
+        notebookEditorOriginalBackup = null;
+        currentActiveEditorNotebookId = null;
+        currentNotebookIndex = Math.max(0, Math.min(currentNotebookIndex, getFilteredNotebooks().length - 1));
+        renderRightCards();
+        if (sidebarMode === 'cal') renderNotebookSidebar();
+        return;
+    }
+
     if (idx !== -1) {
         if (backup.isNew) {
+            freshNotebookIds.delete(id);
             notebookData.splice(idx, 1);
             await saveNotebookData();
             currentNotebookIndex = Math.max(0, currentNotebookIndex - 1);
@@ -3306,6 +3467,7 @@ async function openAddNotebookModal() {
     }
 
     const newId = 'nb_' + Date.now().toString() + Math.floor(Math.random() * 1000);
+    freshNotebookIds.add(newId);
 
     notebookData.unshift({
         id: newId,

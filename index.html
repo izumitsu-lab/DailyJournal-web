@@ -44,6 +44,12 @@
         <aside class="app-sidebar" id="calendarSidebar">
             <div class="sidebar-header">
                 <div class="sidebar-title" id="sidebarTitle">JOURNALS</div>
+                <button type="button" class="sidebar-close-btn" onclick="closeSidebar()" title="サイドバーを閉じる">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
             </div>
             
             <!-- カレンダー用コンテンツ -->
@@ -111,6 +117,14 @@
         <!-- 右側：カードカルーセル -->
         <div class="card-carousel-container" id="journalCarouselContainer"></div>
     </div>
+
+    <!-- PC用：閉じたサイドバーを再表示するボタン -->
+    <button type="button" class="sidebar-reopen-btn left" id="pcLeftSidebarReopen" onclick="toggleLeftSidebar(true)" title="左サイドバーを開く" aria-label="左サイドバーを開く">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="9" y1="4" x2="9" y2="20"></line></svg>
+    </button>
+    <button type="button" class="sidebar-reopen-btn right" id="pcRightSidebarReopen" onclick="toggleRightSidebar(true)" title="Linked Notes を開く" aria-label="Linked Notes を開く">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+    </button>
 
     <!-- 下部ランチャーバー（7ボタン構成） -->
     <div class="bottom-launcher-bar">
@@ -853,15 +867,15 @@
                     <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
                         ※GitHub等に公開しても安全なように、URLとキーはブラウザにのみ保存されます。
                     </div>
-                    <input type="text" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL">
-                    <input type="password" class="settings-text-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;">
+                    <input type="url" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+                    <input type="text" class="settings-text-input masked-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
                     <button type="button" class="data-action-btn primary-btn" style="margin-top: 8px;" onclick="saveSupabaseConfig()">接続設定を保存</button>
                 </div>
 
                 <div class="settings-card-box" id="supabaseAuthBox" style="display: none;">
                     <div class="settings-card-title">👤 アカウント認証</div>
-                    <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス">
-                    <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" style="margin-top: 6px;">
+                    <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="email">
+                    <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" name="password" autocomplete="current-password" style="margin-top: 6px;">
                     <div style="display: flex; gap: 8px; margin-top: 8px;">
                         <button type="button" class="data-action-btn" onclick="signUpSupabase()">新規登録</button>
                         <button type="button" class="data-action-btn primary-btn" onclick="signInSupabase()">ログイン</button>
@@ -876,26 +890,48 @@
                         セキュリティ（RLS）のため、Supabaseの「SQL Editor」に以下を貼り付けて実行し、テーブルを作成してください。
                     </div>
                     <div style="font-size: 11.5px; color: #e67e22; font-weight: bold; margin-bottom: 8px;">
-                        ⚠️ 以前このアプリを設定済みの方へ：カテゴリ／タイプ等の設定を同期する app_settings テーブルが今回追加されました。既存の環境では下記SQLを再度実行してテーブルを追加してください（journals / notebooks は既にある場合、そのままで問題ありません）。
+                        ⚠️ 以前このアプリを設定済みの方へ：同期方式を更新しました（削除の同期・記録単位のマージ・サーバー時刻）。既存の環境でも下記SQLをもう一度すべて実行してください。実行するまでクラウド同期は一時停止し、入力は本体にのみ保存されます（データは失われません）。
                     </div>
                     <div style="font-size: 11.5px; color: #e67e22; font-weight: bold; margin-bottom: 8px;">
                         ⚠️ images バケットは必ず非公開（public = false）のままにしてください。既に public = true で作成・変更してしまった場合は、下記の UPDATE 文を実行して非公開に戻してください。<br>
                         <code>UPDATE storage.buckets SET public = false WHERE id = 'images';</code>
                     </div>
                     <textarea class="settings-text-input" id="supabaseSqlText" readonly style="height: 170px; font-family: monospace; font-size: 10px; background: rgba(0,0,0,0.2);">
+-- Daily Journal セットアップ SQL（v2）
+-- 新規でも既存環境でも、何度実行しても安全です。
 -- 1. テーブル作成
-CREATE TABLE journals ( date_str TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, log_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (date_str, user_id) );
-CREATE TABLE notebooks ( id TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, title TEXT, content TEXT, category TEXT, status TEXT, linked_note_ids JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, PRIMARY KEY (id, user_id) );
-CREATE TABLE app_settings ( user_id UUID PRIMARY KEY REFERENCES auth.users NOT NULL, settings_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW() );
--- 2. RLS有効化 (セキュリティ設定：本人以外はテキストデータを一切読み書きできない)
+CREATE TABLE IF NOT EXISTS journals ( date_str TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, log_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (date_str, user_id) );
+CREATE TABLE IF NOT EXISTS notebooks ( id TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, title TEXT, content TEXT, category TEXT, status TEXT, linked_note_ids JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, PRIMARY KEY (id, user_id) );
+CREATE TABLE IF NOT EXISTS app_settings ( user_id UUID PRIMARY KEY REFERENCES auth.users NOT NULL, settings_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW() );
+-- 2. v2 同期用の列（削除の印・編集時刻）
+ALTER TABLE journals ADD COLUMN IF NOT EXISTS tombstones JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS images_cleaned_at TIMESTAMPTZ;
+UPDATE notebooks SET edited_at = updated_at WHERE edited_at IS NULL;
+-- 3. updated_at はサーバー時刻で付与（端末の時計のずれで差分取得が漏れないように）
+CREATE OR REPLACE FUNCTION set_server_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at := clock_timestamp(); RETURN NEW; END; $$;
+DROP TRIGGER IF EXISTS journals_server_updated_at ON journals;
+CREATE TRIGGER journals_server_updated_at BEFORE INSERT OR UPDATE ON journals FOR EACH ROW EXECUTE FUNCTION set_server_updated_at();
+DROP TRIGGER IF EXISTS notebooks_server_updated_at ON notebooks;
+CREATE TRIGGER notebooks_server_updated_at BEFORE INSERT OR UPDATE ON notebooks FOR EACH ROW EXECUTE FUNCTION set_server_updated_at();
+DROP TRIGGER IF EXISTS app_settings_server_updated_at ON app_settings;
+CREATE TRIGGER app_settings_server_updated_at BEFORE INSERT OR UPDATE ON app_settings FOR EACH ROW EXECUTE FUNCTION set_server_updated_at();
+CREATE INDEX IF NOT EXISTS journals_user_updated_idx ON journals (user_id, updated_at);
+CREATE INDEX IF NOT EXISTS notebooks_user_updated_idx ON notebooks (user_id, updated_at);
+-- 4. RLS有効化 (本人以外はデータを一切読み書きできない)
 ALTER TABLE journals ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "User can manage their own journals" ON journals FOR ALL USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "User can manage their own journals" ON journals;
+CREATE POLICY "User can manage their own journals" ON journals FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 ALTER TABLE notebooks ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "User can manage their own notebooks" ON notebooks FOR ALL USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "User can manage their own notebooks" ON notebooks;
+CREATE POLICY "User can manage their own notebooks" ON notebooks FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "User can manage their own settings" ON app_settings FOR ALL USING (auth.uid() = user_id);
--- 3. Storage バケット作成（非公開。画像はアプリが都度、署名付きURLで本人にだけ配信する）
-INSERT INTO storage.buckets (id, name, public) VALUES ('images', 'images', false);
+DROP POLICY IF EXISTS "User can manage their own settings" ON app_settings;
+CREATE POLICY "User can manage their own settings" ON app_settings FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+-- 5. Storage バケット（非公開。画像はアプリが都度、署名付きURLで本人にだけ配信する）
+INSERT INTO storage.buckets (id, name, public) VALUES ('images', 'images', false) ON CONFLICT (id) DO UPDATE SET public = false;
+DROP POLICY IF EXISTS "User can manage their own images" ON storage.objects;
 CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USING (bucket_id = 'images' AND auth.uid() = owner);
                     </textarea>
                 </div>
@@ -906,6 +942,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
                         以前の設定ミス等で、画像がStorageではなくデータベース側に直接入ってしまっている場合に使います。本体（このスマホ/PC）に保存されている元データを元に、画像をクラウドStorageへアップロードし直し、データベース側は参照だけの軽い状態にします。
                     </div>
                     <button type="button" class="data-action-btn" onclick="migrateEmbeddedImagesToStorage()">画像をStorageへ再アップロードする</button>
+                </div>
+
+                <div class="settings-card-box" id="supabaseCleanupBox" style="display: none;">
+                    <div class="settings-card-title">🧽 クラウドの不要な画像を削除</div>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
+                        記録やノートを削除しても、クラウド（Storage）上の画像ファイルは残ります。どの記録・ノートからも使われていない画像を探して削除し、容量を空けます。直近7日以内にアップロードされた画像は対象外です。端末内の画像には影響しません。
+                    </div>
+                    <button type="button" class="data-action-btn" onclick="cleanupUnusedCloudImages()">不要な画像を探して削除する</button>
                 </div>
             </div>
 
@@ -981,6 +1025,8 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
     </div>
 
     <!-- スクリプト群 -->
+    <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
+    <script src="purify.min.js"></script>
     <script src="main.js"></script>
     <script src="calendar.js"></script>
     <script src="notebooks.js"></script>
@@ -989,16 +1035,7 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
     <script src="supabase-sync.js"></script>
 
-    <!-- アプリのバックグラウンド復帰時に自動で同期するための処理 -->
-    <script>
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-                if (typeof checkSupabaseAuth === 'function') {
-                    checkSupabaseAuth(); // 認証状態を確認し、自動でpullFromSupabase()が実行されます
-                }
-            }
-        });
-    </script>
+    <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 
     <!-- キーボードによる左右スワイプ操作の実装 -->
     <script>

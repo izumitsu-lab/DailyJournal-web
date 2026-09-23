@@ -1691,53 +1691,65 @@ body.light-theme .notebook-toolbar { background: #f8f8fa; border-color: rgba(0, 
    スマホモード / iPhone / 小画面用の特別制御スタイル
    ========================================================= */
 
-/* 1. スマホモード有効時（または画面幅768px以下かつPCモード固定でない場合） */
-body.is-mobile-mode .app-sidebar,
-@media (max-width: 768px) {
-    body:not(.is-desktop-mode) .app-sidebar {
-        display: none !important; /* 左サイドバーを非表示 */
-    }
-}
-
-body.is-mobile-mode .connected-right-sidebar,
-@media (max-width: 768px) {
-    body:not(.is-desktop-mode) .connected-right-sidebar {
-        display: none !important; /* 右サイドバー（Linked Notes）を非表示 */
-    }
-}
-
-body.is-mobile-mode .connected-view-container,
-@media (max-width: 768px) {
-    body:not(.is-desktop-mode) .connected-view-container {
-        flex-direction: row;
-        width: 100%;
-        height: 100%;
-    }
-}
+/* 1. スマホモード有効時（または画面幅768px以下かつPCモード固定でない場合）
+   ※「セレクタ, @media {...}」という書き方はCSSとして不正でブロックごと無視されるため、
+     body.is-mobile-mode 用と @media 用に分けて記述する */
+body.is-mobile-mode .app-sidebar { display: none !important; } /* 左サイドバーを非表示 */
+body.is-mobile-mode .connected-right-sidebar { display: none !important; } /* 右サイドバー（Linked Notes）を非表示 */
+body.is-mobile-mode .connected-view-container { flex-direction: row; width: 100%; height: 100%; }
 
 /* スマホ時のパディングとカード表示の最適化 */
-body.is-mobile-mode,
+body.is-mobile-mode { padding-left: 10px; padding-right: 10px; }
+body.is-mobile-mode .main-display { padding: 16px 14px 14px; border-radius: 20px; }
+body.is-mobile-mode .date-title { font-size: 19px; }
+body.is-mobile-mode .log-item { padding: 12px 13px; }
+body.is-mobile-mode .log-content { font-size: 14px; }
+body.is-mobile-mode .notebook-grid-card { aspect-ratio: auto; min-height: 170px; padding: 13px; }
+
+/* JSでモードが付与される前（初回描画）や、オート判定時の画面幅フォールバック */
 @media (max-width: 768px) {
-    body:not(.is-desktop-mode) {
-        padding-left: 10px;
-        padding-right: 10px;
-    }
-    body:not(.is-desktop-mode) .main-display {
-        padding: 16px 14px 14px;
-        border-radius: 20px;
-    }
-    body:not(.is-desktop-mode) .date-title {
-        font-size: 19px;
-    }
-    body:not(.is-desktop-mode) .log-item {
-        padding: 12px 13px;
-    }
-    body:not(.is-desktop-mode) .log-content {
-        font-size: 14px;
-    }
-    body:not(.is-desktop-mode) .notebook-grid-card {
-        aspect-ratio: auto;
-        min-height: 170px;
-        padding: 13px;
-    }
+    body:not(.is-desktop-mode) .app-sidebar { display: none !important; }
+    body:not(.is-desktop-mode) .connected-right-sidebar { display: none !important; }
+    body:not(.is-desktop-mode) .connected-view-container { flex-direction: row; width: 100%; height: 100%; }
+    body:not(.is-desktop-mode) { padding-left: 10px; padding-right: 10px; }
+    body:not(.is-desktop-mode) .main-display { padding: 16px 14px 14px; border-radius: 20px; }
+    body:not(.is-desktop-mode) .date-title { font-size: 19px; }
+    body:not(.is-desktop-mode) .log-item { padding: 12px 13px; }
+    body:not(.is-desktop-mode) .log-content { font-size: 14px; }
+    body:not(.is-desktop-mode) .notebook-grid-card { aspect-ratio: auto; min-height: 170px; padding: 13px; }
 }
+
+/* =========================================================
+   PC用：閉じたサイドバーを再表示するタブ
+   ========================================================= */
+.sidebar-reopen-btn {
+    position: fixed; top: 50%; transform: translateY(-50%); z-index: 50;
+    width: 22px; height: 64px; display: none; align-items: center; justify-content: center;
+    background: var(--card-bg); color: var(--text-secondary);
+    border: 1px solid var(--card-border); cursor: pointer; padding: 0;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); transition: color 0.15s, width 0.15s;
+}
+.sidebar-reopen-btn:hover { color: var(--text-primary); width: 28px; }
+.sidebar-reopen-btn.left { left: 0; border-left: none; border-radius: 0 10px 10px 0; }
+.sidebar-reopen-btn.right { right: 0; border-right: none; border-radius: 10px 0 0 10px; color: var(--notebook-color); }
+.sidebar-reopen-btn.visible { display: flex; }
+body.is-mobile-mode .sidebar-reopen-btn { display: none !important; }
+body.readonly-mode .sidebar-reopen-btn { display: none !important; }
+
+/* =========================================================
+   お知らせ（トースト）・画像読み込み
+   ========================================================= */
+.app-toast-box { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom, 0px)); z-index: 3000; display: flex; flex-direction: column; gap: 8px; width: min(92vw, 520px); pointer-events: none; }
+.app-toast { pointer-events: auto; background: var(--card-bg); color: var(--text-primary); border: 1px solid var(--card-border); border-left: 4px solid #e67e22; border-radius: 12px; padding: 11px 14px; font-size: 13px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); cursor: pointer; animation: sidebarFadeIn 0.2s ease; }
+img[data-idbimg] { background: rgba(128, 128, 128, 0.12); }
+img.img-missing { opacity: 0.35; }
+img[data-missing] { opacity: 0.35; background: rgba(128, 128, 128, 0.2); }
+
+/* 複数タブ：使われていないタブの案内 */
+.tab-inactive-overlay { position: fixed; inset: 0; z-index: 5000; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.tab-inactive-card { background: var(--card-bg); color: var(--text-primary); border: 1px solid var(--card-border); border-radius: 18px; padding: 24px 22px; max-width: 360px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.tab-inactive-title { font-size: 16px; font-weight: 800; }
+.tab-inactive-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 6px; }
+.tab-inactive-card .modal-btn { width: 100%; }
+/* Anon Key 欄：パスワード欄扱いにせず（iPhoneの自動入力の誤作動防止）、表示だけ伏せ字にする */
+.masked-input { -webkit-text-security: disc; }

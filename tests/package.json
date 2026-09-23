@@ -1,0 +1,13 @@
+{
+  "name": "daily-journal-tests",
+  "private": true,
+  "description": "Daily Journal の自動テスト（偽のSupabaseに複数端末をつないで同期・XSS・UIを確認）",
+  "scripts": {
+    "test": "node test-sync.js && node test-ui.js && node test-round2.js && node test-round3.js"
+  },
+  "devDependencies": {
+    "jszip": "^3.10.1",
+    "playwright": "^1.50.0",
+    "sortablejs": "^1.15.0"
+  }
+}
