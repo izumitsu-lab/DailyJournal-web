@@ -189,10 +189,96 @@ function selectNotebookViewFromModal(mode) {
     closeModal('viewScopeModal');
 }
 
+// ==========================================
+// ノート本文HTMLのサニタイズ（XSS対策）
+// ==========================================
+// ノート本文はペーストや他端末からの同期で外部由来のHTMLが入りうるため、
+// 画面に出す前・保存する前に必ず sanitizeNoteHtml を通す。
+// アプリ自身が本文に埋め込むインラインハンドラ（画像サイズ切替・表の行列追加）だけは、完全一致で許可する。
+const _NOTE_HANDLER_ALLOW = [
+    /^event\.stopPropagation\(\);?$/,
+    /^event\.preventDefault\(\);?$/,
+    /^setNotebookImageSize\(this, 'size-(full|half|quarter)', '[A-Za-z0-9_-]{1,100}'\)$/,
+    /^removeNotebookImage\(this, '[A-Za-z0-9_-]{1,100}'\)$/,
+    /^handleNotebookTableAdd(Column|Row)Click\(this, event\);?$/
+];
+const _NOTE_URI_RE = /^(?:(?:(?:f|ht)tps?|mailto|tel|idbimg|sbimg):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+const _NOTE_FORBID_TAGS = ['script', 'style', 'iframe', 'frame', 'frameset', 'object', 'embed', 'link', 'meta', 'base', 'form', 'svg', 'math', 'template', 'noscript'];
+let _purifyReady = false;
+
+function _isAllowedNoteHandler(v) {
+    const t = (v || '').trim();
+    return _NOTE_HANDLER_ALLOW.some(re => re.test(t));
+}
+
+function _setupPurify() {
+    if (_purifyReady || !window.DOMPurify || !DOMPurify.isSupported) return _purifyReady;
+    DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+        const name = (data.attrName || '').toLowerCase();
+        if (name.startsWith('on')) {
+            if (_isAllowedNoteHandler(data.attrValue)) data.forceKeepAttr = true;
+            else data.keepAttr = false;
+        } else if (name === 'contenteditable') {
+            if (String(data.attrValue).toLowerCase() === 'false') data.forceKeepAttr = true;
+            else data.keepAttr = false;
+        }
+    });
+    _purifyReady = true;
+    return true;
+}
+
+// DOMPurify が読み込めなかった場合（オフライン初回など）の保守的なフォールバック
+function _fallbackSanitize(html) {
+    const tpl = document.createElement('template'); // template内は不活性（画像読込もスクリプト実行もしない）
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll(_NOTE_FORBID_TAGS.join(',')).forEach(el => el.remove());
+    tpl.content.querySelectorAll('*').forEach(el => {
+        for (const attr of Array.from(el.attributes)) {
+            const n = attr.name.toLowerCase();
+            if (n.startsWith('on')) { if (!_isAllowedNoteHandler(attr.value)) el.removeAttribute(attr.name); }
+            else if (n === 'contenteditable') { if (attr.value.toLowerCase() !== 'false') el.removeAttribute(attr.name); }
+            else if (['href', 'src', 'xlink:href', 'action', 'formaction', 'srcset', 'background', 'poster'].includes(n)) {
+                const v = attr.value.replace(/[\u0000-\u0020]/g, '');
+                const ok = (n === 'src' && /^data:image\//i.test(v)) || (_NOTE_URI_RE.test(v) && !/^(javascript|vbscript|data):/i.test(v));
+                if (!ok || n === 'srcset') el.removeAttribute(attr.name);
+            }
+        }
+    });
+    return tpl.innerHTML;
+}
+
+let _noteSanitizeCache = new Map();
+function sanitizeNoteHtml(html) {
+    if (!html) return '';
+    if (typeof html !== 'string') return '';
+    const cached = _noteSanitizeCache.get(html);
+    if (cached !== undefined) return cached;
+    let out;
+    if (_setupPurify()) {
+        out = DOMPurify.sanitize(html, {
+            FORBID_TAGS: _NOTE_FORBID_TAGS,
+            ADD_ATTR: ['target', 'contenteditable'],
+            ALLOWED_URI_REGEXP: _NOTE_URI_RE
+        });
+    } else {
+        out = _fallbackSanitize(html);
+    }
+    if (_noteSanitizeCache.size > 400) _noteSanitizeCache = new Map();
+    _noteSanitizeCache.set(html, out);
+    _noteSanitizeCache.set(out, out);
+    return out;
+}
+
+// 不活性な <template> で解析する（div.innerHTML と違い、img onerror 等が発火しない）
+function _parseInert(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html || '';
+    return tpl;
+}
+
 function stripHtml(html) {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    return tmp.textContent || tmp.innerText || '';
+    if (!html) return '';
+    return _parseInert(html).content.textContent || '';
 }
 
 function openNotebookLinked(id) {
@@ -299,10 +385,9 @@ function buildNotebookCategoryBadge(n) {
 
 function cleanNotebookPreviewHtml(html) {
     if (!html) return '';
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    tmp.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-    return tmp.innerHTML;
+    const tpl = _parseInert(sanitizeNoteHtml(html));
+    tpl.content.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+    return tpl.innerHTML;
 }
 
 function createNotebookCardElement(n) {
@@ -1836,10 +1921,7 @@ function buildNotebookContentHtml(n) {
     if (!cleanContent.trim()) {
         cleanContent = '';
     } else {
-        const tmp = document.createElement('div');
-        tmp.innerHTML = cleanContent;
-        tmp.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-        cleanContent = tmp.innerHTML;
+        cleanContent = cleanNotebookPreviewHtml(cleanContent);
     }
 
     if (window.IS_READONLY_MODE) {
@@ -2005,12 +2087,13 @@ function generateNotebookHtmlDocument(n) {
     const updatedDate = n.updatedAt ? new Date(n.updatedAt).toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
     const dateStr = updatedDate ? `更新: ${updatedDate}` : (createdDate ? `作成: ${createdDate}` : '');
 
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = n.content || '';
+    const tempDiv = _parseInert(sanitizeNoteHtml(n.content || '')).content;
     tempDiv.querySelectorAll('.nb-img-controls').forEach(el => el.remove());
     tempDiv.querySelectorAll('.nb-img-wrapper').forEach(el => el.classList.remove('selected'));
     tempDiv.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-    const cleanContent = tempDiv.innerHTML;
+    tempDiv.querySelectorAll('*').forEach(el => { for (const a of Array.from(el.attributes)) if (a.name.toLowerCase().startsWith('on')) el.removeAttribute(a.name); });
+    const _wrap = document.createElement('template'); _wrap.content.appendChild(tempDiv);
+    const cleanContent = _wrap.innerHTML;
 
     return `<!DOCTYPE html>
 <html lang="ja">
@@ -2327,8 +2410,9 @@ async function handleNotebookPaste(e, id) {
     if (htmlData && (htmlData.includes('<table') || htmlData.includes('<blockquote') || htmlData.includes('border-left'))) {
         e.preventDefault();
 
+        // クリップボードのHTMLは外部由来なので、整形前にサニタイズする（img onerror 等を除去）
         const parser = new DOMParser();
-        const doc = parser.parseFromString(htmlData, 'text/html');
+        const doc = parser.parseFromString(sanitizeNoteHtml(htmlData), 'text/html');
 
         const quotes = doc.querySelectorAll('blockquote, [style*="border-left"]');
         quotes.forEach(q => {
@@ -2553,8 +2637,7 @@ function getDirectChildBlock(container, node) {
 }
 
 function stripNestedBlockTags(html, tagNames) {
-    const temp = document.createElement('div');
-    temp.innerHTML = html;
+    const temp = _parseInert(html).content;
     const selector = tagNames.join(', ');
     temp.querySelectorAll(selector).forEach(elToUnwrap => {
         while (elToUnwrap.firstChild) {
@@ -2562,7 +2645,8 @@ function stripNestedBlockTags(html, tagNames) {
         }
         elToUnwrap.remove();
     });
-    return temp.innerHTML;
+    const out = document.createElement('template'); out.content.appendChild(temp);
+    return out.innerHTML;
 }
 
 function setNotebookBlockFormat(id, tag) {

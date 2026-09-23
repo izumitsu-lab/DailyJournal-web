@@ -238,9 +238,20 @@ function setMessageType(mode, type) {
     else ta.placeholder = mode === 'add' ? "いま起きたことや記録を入力..." : "記録内容を編集...";
 }
 
+// PCモードでサイドバーを閉じたとき、画面端に「再表示」タブを出す（閉じたまま戻せなくなる問題の対策）
+function updateSidebarReopenButtons() {
+    const left = document.getElementById('pcLeftSidebarReopen');
+    const right = document.getElementById('pcRightSidebarReopen');
+    const isPc = !isCurrentMobileMode() && !window.IS_READONLY_MODE;
+    const inCardView = calendarScope === 'notebooks' && ['card', 'linked', 'single'].includes(notebookViewMode);
+    if (left) left.classList.toggle('visible', isPc && sidebarMode !== 'cal');
+    if (right) right.classList.toggle('visible', isPc && inCardView && typeof isRightSidebarOpen !== 'undefined' && !isRightSidebarOpen);
+}
+
 function updateSidebars() {
     const calSidebar = document.getElementById('calendarSidebar'); 
     calSidebar.classList.remove('active');
+    updateSidebarReopenButtons();
     
     if (isCurrentMobileMode()) {
         // スマホモード時は常駐サイドバーを無効化
@@ -312,6 +323,9 @@ function toggleRightSidebar(isOpen) {
     if (viewContainer) {
         viewContainer.classList.toggle('hide-right-sidebar', !isRightSidebarOpen);
     }
+    const rightSwitch = document.getElementById('toggleRightSidebarSwitch');
+    if (rightSwitch) rightSwitch.checked = isRightSidebarOpen;
+    updateSidebarReopenButtons();
 }
 
 function handleCategoryButtonClick() { renderCategoryFilterModal(); openModal('categorySelectModal'); }
@@ -720,14 +734,14 @@ function createLogItemHtml(log, dateStr, originalIndex) {
     else if (sType === 'outgoing') sBadge = `<span class="slack-direction-badge outgoing"><span>📤</span><span>自分から</span></span>`;
 
     const p = Array.isArray(log.images) ? log.images : (log.image ? [log.image] : []);
-    const pHtml = p.length > 0 ? `<div class="log-photos-grid">` + p.map(img => `<div class="log-photo-thumb-wrap" onclick="event.stopPropagation(); openLightbox('${img}')"><img class="log-photo-thumb" src="${img}" loading="lazy"></div>`).join('') + `</div>` : "";
+    const pHtml = p.length > 0 ? `<div class="log-photos-grid">` + p.map(img => `<div class="log-photo-thumb-wrap" onclick="event.stopPropagation(); openLightbox(this.querySelector('img').src)"><img class="log-photo-thumb" src="${img}" loading="lazy"></div>`).join('') + `</div>` : "";
 
     let cHtml = "";
     if (sType === 'incoming') cHtml = `<div class="chat-bubble-card incoming"><div class="chat-bubble-header"><span>💬</span><span>${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
     else if (sType === 'outgoing') cHtml = `<div class="chat-bubble-card outgoing"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
     else cHtml = `<div class="log-content">${parseLinksAndText(log.text)}</div>`;
 
-    return `<li class="log-item" id="logItem_${dateStr}_${originalIndex}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${log.time}</span>${catBadge}${sBadge}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', ${originalIndex})"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${cHtml}${pHtml}</li>`;
+    return `<li class="log-item" id="logItem_${dateStr}_${log.id}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${cHtml}${pHtml}</li>`;
 }
 
 function getFilteredDayLogs(dStr) {
@@ -771,6 +785,7 @@ function renderRightCards() {
             });
         }
     }
+    updateSidebarReopenButtons();
 }
 
 function renderJournalSearchResultsCard(query) {
@@ -898,7 +913,7 @@ function renderPhotoJournalCarousel() {
         const sType = showSlack ? (log.slackType || (log.isSlack ? 'incoming' : null)) : null;
 
         let sb = ""; if (sType === 'incoming') sb = `<span class="slack-direction-badge incoming"><span>📥</span><span>相手から</span></span>`; else if (sType === 'outgoing') sb = `<span class="slack-direction-badge outgoing"><span>📤</span><span>自分から</span></span>`;
-        let sHtml = ""; photos.forEach(u => sHtml += `<div class="photo-stage-slide"><img class="photo-stage-full-img" src="${u}" onclick="openLightbox('${u}')" loading="lazy"></div>`);
+        let sHtml = ""; photos.forEach(u => sHtml += `<div class="photo-stage-slide"><img class="photo-stage-full-img" src="${u}" onclick="openLightbox(this.src)" loading="lazy"></div>`);
         const cp = photos.length > 1 ? `<div class="photo-count-pill">📷 1 / ${photos.length}</div>` : '';
         
         let mb = "";
@@ -906,9 +921,9 @@ function renderPhotoJournalCarousel() {
         else if (sType === 'outgoing') mb = `<div class="chat-bubble-card outgoing" style="margin-top: 2px;"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(cat)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
         else mb = `<div class="journal-drawer-text">${parseLinksAndText(log.text)}</div>`;
 
-        const panelKey = `photo_${dateStr}_${index}`;
+        const panelKey = `photo_${dateStr}_${log.id}`;
         const p = document.createElement('div'); p.className = 'card-carousel-panel'; p.dataset.key = panelKey; p.dataset.date = dateStr;
-        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${log.time}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', ${index})"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${mb}</div></div>`;
+        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${mb}</div></div>`;
         container.appendChild(p);
     });
 
@@ -1048,7 +1063,7 @@ function renderModalCategoryChips(mode, cSel) {
     const types = appTypes.filter(t => categories.some(ca => (ca.type || "一般") === t));
     types.forEach(t => {
         const r = document.createElement('div'); r.className = 'category-type-row';
-        r.innerHTML = `<div style="display: flex; align-items: center; gap: 5px;"><span style="font-size: 12px;">${getTypeIcon(t)}</span><span class="category-type-name">${t}</span></div>`;
+        r.innerHTML = `<div style="display: flex; align-items: center; gap: 5px;"><span style="font-size: 12px;">${getTypeIcon(t)}</span><span class="category-type-name">${escapeHtml(t)}</span></div>`;
         const w = document.createElement('div'); w.className = 'category-chips-wrap';
         categories.filter(ca => (ca.type || "一般") === t).forEach(cat => {
             const b = document.createElement('button'); b.type = 'button'; b.className = `category-chip ${cat.name === cSel ? 'selected' : ''}`; b.textContent = cat.name;
@@ -1085,9 +1100,14 @@ function openAddModal() {
     setTimeout(() => document.getElementById('journalInputText').focus(), 200);
 }
 
-function openEditModal(dStr, i) {
-    const log = journalData[dStr] && journalData[dStr][i]; if (!log) return;
-    currentEditTarget = { dateStr: dStr, index: i };
+function findLogById(dStr, id) {
+    return (journalData[dStr] || []).find(l => l.id === id) || null;
+}
+
+// 記録は配列の位置ではなくIDで特定する（編集中に同期で並びが変わっても別の記録を上書きしない）
+function openEditModal(dStr, id) {
+    const log = findLogById(dStr, id); if (!log) return;
+    currentEditTarget = { dateStr: dStr, id: id };
     document.getElementById('editModalTimeBadge').textContent = log.time || ""; document.getElementById('editInputText').value = log.text || "";
     selectedEditCategory = log.category || "ライフログ"; 
     renderModalCategoryChips('edit', selectedEditCategory);
@@ -1121,6 +1141,7 @@ async function saveNewLog() {
     const sA = isSlackEnabledForType(getLogCategoryType(selectedAddCategory));
 
     journalData[dStr].push({ 
+        id: generateId('lg_'),
         time: tStr, 
         text: t, 
         category: selectedAddCategory, 
@@ -1142,19 +1163,21 @@ async function saveNewLog() {
 }
 
 async function saveEditedLog() {
-    const { dateStr: d, index: i } = currentEditTarget; if (!d || i === null || !journalData[d] || !journalData[d][i]) return;
+    const { dateStr: d, id } = currentEditTarget; if (!d || !id) return;
+    const target = findLogById(d, id);
+    if (!target) { alert("この記録は他の端末で削除されたため、更新できませんでした。"); closeModal('editModal'); renderRightCards(); return; }
     const t = document.getElementById('editInputText').value.trim();
     if (!t && !currentEditPhotos.length) { alert("内容または写真を添付してください。"); return; }
     if (!selectedEditCategory) { alert("カテゴリを選択してください。"); return; }
     
     const sA = isSlackEnabledForType(getLogCategoryType(selectedEditCategory));
 
-    journalData[d][i].text = t; 
-    journalData[d][i].category = selectedEditCategory;
-    journalData[d][i].slackType = (sA && currentEditMsgType !== 'normal') ? currentEditMsgType : null; 
-    delete journalData[d][i].isSlack;
-    journalData[d][i].images = [...currentEditPhotos]; 
-    delete journalData[d][i].image;
+    target.text = t; 
+    target.category = selectedEditCategory;
+    target.slackType = (sA && currentEditMsgType !== 'normal') ? currentEditMsgType : null; 
+    delete target.isSlack;
+    target.images = [...currentEditPhotos]; 
+    delete target.image;
     
     await saveJournalData();
     
@@ -1163,10 +1186,11 @@ async function saveEditedLog() {
 }
 
 async function deleteFromEditModal() {
-    const { dateStr: d, index: i } = currentEditTarget; if (!d || i === null) return;
+    const { dateStr: d, id } = currentEditTarget; if (!d || !id) return;
     if (confirm("この記録を削除しますか？")) { 
-        journalData[d].splice(i, 1); 
-        if (!journalData[d].length) delete journalData[d]; 
+        const i = (journalData[d] || []).findIndex(l => l.id === id);
+        if (i !== -1) journalData[d].splice(i, 1); 
+        if (journalData[d] && !journalData[d].length) delete journalData[d]; 
         
         await saveJournalData();
         
@@ -1191,10 +1215,10 @@ function renderSettingsTypeList() {
     const countEl = document.getElementById('typeCountIndicator');
     if (countEl) countEl.textContent = `${appTypes.length}件`;
 
-    appTypes.forEach((typeName) => {
+    appTypes.forEach((typeName, ti) => {
         const card = document.createElement('div');
         card.className = 'settings-type-card';
-        card.id = `typeCard_${escapeHtml(typeName)}`;
+        card.id = `typeCard_${ti}`;
         card.dataset.id = typeName;
 
         const icon = getTypeIcon(typeName);
@@ -1204,29 +1228,29 @@ function renderSettingsTypeList() {
 
         card.innerHTML = `
             <div class="settings-type-header">
-                <div class="settings-type-title-area" id="typeTitleArea_${escapeHtml(typeName)}">
+                <div class="settings-type-title-area" id="typeTitleArea_${ti}">
                     <span class="drag-handle" title="ドラッグして並び替え">⠿</span>
                     <span class="settings-type-icon">${icon}</span>
                     <span class="settings-type-name" title="${escapeHtml(typeName)}">${escapeHtml(typeName)}</span>
                     <span style="font-size: 11px; color: var(--text-secondary); font-weight: 600;">(${catCount})</span>
                 </div>
-                <div class="settings-type-actions" id="typeActions_${escapeHtml(typeName)}">
-                    <button type="button" class="settings-icon-btn edit-btn" onclick="startRenameType('${escapeHtml(typeName)}')">✏️ リネーム</button>
-                    ${appTypes.length > 1 ? `<button type="button" class="settings-icon-btn del-btn" onclick="handleDeleteType('${escapeHtml(typeName)}')">🗑️</button>` : ''}
+                <div class="settings-type-actions" id="typeActions_${ti}">
+                    <button type="button" class="settings-icon-btn edit-btn" onclick="startRenameType(${ti})">✏️ リネーム</button>
+                    ${appTypes.length > 1 ? `<button type="button" class="settings-icon-btn del-btn" onclick="handleDeleteType(appTypes[${ti}])">🗑️</button>` : ''}
                 </div>
             </div>
             <div class="settings-type-toggles-grid">
                 <div class="settings-mini-toggle">
                     <span>📔 Notebooks</span>
                     <label class="switch switch-sm">
-                        <input type="checkbox" ${isNb ? 'checked' : ''} onchange="toggleTypeNotebookSetting('${escapeHtml(typeName)}', this.checked)">
+                        <input type="checkbox" ${isNb ? 'checked' : ''} onchange="toggleTypeNotebookSetting(appTypes[${ti}], this.checked)">
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="settings-mini-toggle">
                     <span>💬 Slack機能</span>
                     <label class="switch switch-sm">
-                        <input type="checkbox" ${isSlack ? 'checked' : ''} onchange="toggleTypeSlackSetting('${escapeHtml(typeName)}', this.checked)">
+                        <input type="checkbox" ${isSlack ? 'checked' : ''} onchange="toggleTypeSlackSetting(appTypes[${ti}], this.checked)">
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -1276,28 +1300,32 @@ function handleAddNewType() {
     }
 }
 
-function startRenameType(typeName) {
-    const titleArea = document.getElementById(`typeTitleArea_${typeName}`);
-    const actionsArea = document.getElementById(`typeActions_${typeName}`);
+// タイプ名は利用者が自由に付けられる文字列なので、インラインJSには埋め込まず「何番目か」で扱う
+function startRenameType(ti) {
+    const typeName = appTypes[ti];
+    if (typeName === undefined) return;
+    const titleArea = document.getElementById(`typeTitleArea_${ti}`);
+    const actionsArea = document.getElementById(`typeActions_${ti}`);
     if (!titleArea || !actionsArea) return;
 
     titleArea.innerHTML = `
         <span class="drag-handle" style="opacity: 0.3; pointer-events: none;">⠿</span>
-        <input type="text" class="settings-type-name-edit" id="renameInput_${escapeHtml(typeName)}" value="${escapeHtml(typeName)}" onkeydown="if(event.key==='Enter'){ applyRenameType('${escapeHtml(typeName)}'); }">
+        <input type="text" class="settings-type-name-edit" id="renameInput_${ti}" value="${escapeHtml(typeName)}" onkeydown="if(event.key==='Enter'){ applyRenameType(${ti}); }">
     `;
     actionsArea.innerHTML = `
-        <button type="button" class="settings-icon-btn edit-btn" onclick="applyRenameType('${escapeHtml(typeName)}')">✓ 保存</button>
+        <button type="button" class="settings-icon-btn edit-btn" onclick="applyRenameType(${ti})">✓ 保存</button>
         <button type="button" class="settings-icon-btn" onclick="renderSettingsTypeList()">✕</button>
     `;
-    const editInput = document.getElementById(`renameInput_${typeName}`);
+    const editInput = document.getElementById(`renameInput_${ti}`);
     if (editInput) {
         editInput.focus();
         editInput.select();
     }
 }
 
-function applyRenameType(oldName) {
-    const editInput = document.getElementById(`renameInput_${oldName}`);
+function applyRenameType(ti) {
+    const oldName = appTypes[ti];
+    const editInput = document.getElementById(`renameInput_${ti}`);
     if (!editInput) return;
     const newName = editInput.value.trim();
     if (!newName) { alert("タイプ名を入力してください。"); return; }
@@ -1597,7 +1625,7 @@ function renderGlobalSearchResults(query) {
                     text: l.text,
                     category: l.category || 'ライフログ',
                     slackType: sT,
-                    index: idx
+                    index: l.id
                 });
             }
         });
@@ -1661,7 +1689,7 @@ function renderGlobalSearchResults(query) {
             else if (item.slackType === 'outgoing') sBadge = `<span class="slack-direction-badge outgoing" style="font-size:10px;padding:1px 6px;">📤 自分</span>`;
 
             html += `
-                <div class="search-result-item" onclick="jumpFromGlobalSearchToDay('${item.date}', ${item.index})">
+                <div class="search-result-item" onclick="jumpFromGlobalSearchToDay('${item.date}', '${item.index}')">
                     <div class="search-result-header">
                         <div style="display:flex; align-items:center; gap:6px;">
                             <span class="search-type-pill journal">JOURNAL</span>
@@ -2296,18 +2324,42 @@ function importData(e) {
         try {
             const imp = JSON.parse(ev.target.result);
             if (typeof imp === 'object' && imp !== null) {
-                if (confirm("既存のデータにインポートしたデータを統合・復元しますか？")) {
-                    if (imp.appTypes && Array.isArray(imp.appTypes)) { appTypes = imp.appTypes; saveAppTypes(); }
-                    if (imp.categories && Array.isArray(imp.categories)) { categories = imp.categories; saveCategories(); }
-                    if (imp.typeSlackSettings) { typeSlackSettings = imp.typeSlackSettings; saveTypeSlackSettings(); }
-                    if (imp.typeNotebookSettings) { typeNotebookSettings = imp.typeNotebookSettings; saveTypeNotebookSettings(); }
+                // 旧形式（ファイル全体がジャーナル）にも対応
+                const looksLikeBareJournal = !imp.journalData && !imp.notebookData && !imp.appTypes && Object.keys(imp).some(k => /^\d{4}-\d{2}-\d{2}$/.test(k));
+                const impJournal = imp.journalData ? sanitizeJournalData(imp.journalData) : (looksLikeBareJournal ? sanitizeJournalData(imp) : null);
+                const impNotes = Array.isArray(imp.notebookData) ? imp.notebookData.map(sanitizeNote).filter(Boolean) : null;
+                if (!impJournal && !impNotes && !Array.isArray(imp.appTypes) && !Array.isArray(imp.categories)) {
+                    alert("このファイルにはインポートできるデータが含まれていません。");
+                    e.target.value = "";
+                    return;
+                }
+                if (confirm("バックアップの内容を現在のデータに統合しますか？\n（同じ記録・ノートはバックアップの内容で上書きされます。現在のデータは削除されません）")) {
+                    if (imp.appTypes && Array.isArray(imp.appTypes)) { appTypes = imp.appTypes.filter(t => typeof t === 'string' && t.trim()); saveAppTypes(); }
+                    if (imp.categories && Array.isArray(imp.categories)) { categories = imp.categories.filter(c => c && typeof c.name === 'string' && c.name.trim()).map(c => ({ name: c.name, type: typeof c.type === 'string' ? c.type : '一般' })); saveCategories(); }
+                    if (imp.typeSlackSettings && typeof imp.typeSlackSettings === 'object') { typeSlackSettings = imp.typeSlackSettings; saveTypeSlackSettings(); }
+                    if (imp.typeNotebookSettings && typeof imp.typeNotebookSettings === 'object') { typeNotebookSettings = imp.typeNotebookSettings; saveTypeNotebookSettings(); }
                     if (typeof imp.hideEmptyCards === 'boolean') { hideEmptyCards = imp.hideEmptyCards; localStorage.setItem('daily_journal_hide_empty', hideEmptyCards); applyHideEmptyCardsSetting(); }
-                    if (imp.deviceDisplayMode) { deviceDisplayMode = imp.deviceDisplayMode; localStorage.setItem('daily_journal_device_mode', deviceDisplayMode); applyDeviceModeSetting(); }
-                    
-                    if (imp.notebookData && Array.isArray(imp.notebookData)) { notebookData = imp.notebookData; await saveNotebookData(); }
-                    
-                    journalData = imp.journalData || imp; 
-                    
+                    if (['auto', 'mobile', 'desktop'].includes(imp.deviceDisplayMode)) { deviceDisplayMode = imp.deviceDisplayMode; localStorage.setItem('daily_journal_device_mode', deviceDisplayMode); applyDeviceModeSetting(); }
+
+                    if (impNotes) {
+                        impNotes.forEach(n => {
+                            const idx = notebookData.findIndex(x => x.id === n.id);
+                            if (idx !== -1) notebookData[idx] = n; else notebookData.push(n);
+                        });
+                        await saveNotebookData();
+                    }
+
+                    if (impJournal) {
+                        Object.keys(impJournal).forEach(d => {
+                            const cur = journalData[d] || [];
+                            impJournal[d].forEach(log => {
+                                const i = cur.findIndex(l => l.id === log.id);
+                                if (i !== -1) cur[i] = log; else cur.push(log);
+                            });
+                            journalData[d] = cur;
+                        });
+                    }
+
                     await syncAndMigrateCategories(); 
                     await saveJournalData(); 
                     

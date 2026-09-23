@@ -74,71 +74,484 @@ let currentAddMsgType = 'normal';
 let currentEditMsgType = 'normal';
 let currentAddPhotos = [];
 let currentEditPhotos = [];
-let currentEditTarget = { dateStr: null, index: null };
+let currentEditTarget = { dateStr: null, id: null };
 let isProgrammaticScroll = false;
 let programmaticScrollTimer = null;
 
 // ==========================================
 // IndexedDB Setup & Wrappers
 // ==========================================
+// v2: 画像を別ストア(images)に分離。appData 側の journalData / notebookData には
+//     "idbimg:<sha256>" という参照だけを保存し、1件保存するたびに全画像を書き直さないようにする。
 const DB_NAME = 'DailyJournalDB';
+const DB_VERSION = 2;
 const STORE_NAME = 'appData';
+const IMG_STORE = 'images';
+const IDB_IMG_PREFIX = 'idbimg:';
+const DATA_URI_RE = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g;
+const DATA_URI_FULL_RE = /^data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/;
+const IDB_REF_RE = /idbimg:([a-f0-9]{64})/g;
+const SAFE_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+let _dbPromise = null;
 function initDB() {
-    return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, 1);
+    if (_dbPromise) return _dbPromise;
+    _dbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
         req.onupgradeneeded = (e) => {
             const db = e.target.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME);
-            }
+            if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+            if (!db.objectStoreNames.contains(IMG_STORE)) db.createObjectStore(IMG_STORE);
         };
+        req.onsuccess = () => {
+            const db = req.result;
+            // 別タブで新しいバージョンが開かれたら接続を手放す（ブロック防止）
+            db.onversionchange = () => { db.close(); _dbPromise = null; };
+            db.onclose = () => { _dbPromise = null; };
+            resolve(db);
+        };
+        req.onerror = () => { _dbPromise = null; reject(req.error); };
+    });
+    return _dbPromise;
+}
+
+function _txDone(tx) {
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+    });
+}
+
+async function getDBData(key) {
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+        const req = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(key);
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
     });
 }
 
-function getDBData(key) {
-    return new Promise(async (resolve, reject) => {
-        try {
-            const db = await initDB();
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const store = tx.objectStore(STORE_NAME);
-            const req = store.get(key);
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
-        } catch (e) { reject(e); }
+async function setDBData(key, value) {
+    const db = await initDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(value, key);
+    await _txDone(tx);
+}
+
+async function deleteDBData(key) {
+    const db = await initDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(key);
+    await _txDone(tx);
+}
+
+// ==========================================
+// 画像ストア（ハッシュ ⇔ Base64）
+// ==========================================
+const _hashByData = new Map();   // dataURL -> sha256
+const _dataByHash = new Map();   // sha256  -> dataURL
+const _storedImageHashes = new Set(); // IndexedDB の images ストアに保存済みのハッシュ
+
+function isDataImage(s) { return typeof s === 'string' && s.startsWith('data:image/'); }
+function isValidDataImage(s) { return typeof s === 'string' && DATA_URI_FULL_RE.test(s); }
+
+async function sha256Hex(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function registerImage(hash, dataUrl) {
+    _hashByData.set(dataUrl, hash);
+    _dataByHash.set(hash, dataUrl);
+}
+function getImageByHash(hash) { return _dataByHash.get(hash) || null; }
+
+async function hashImage(dataUrl) {
+    let h = _hashByData.get(dataUrl);
+    if (!h) { h = await sha256Hex(dataUrl); registerImage(h, dataUrl); }
+    return h;
+}
+async function ensureImageHashes(list) {
+    for (const s of list) if (isDataImage(s) && !_hashByData.has(s)) await hashImage(s);
+}
+
+// 変更検知用の軽量な画像キー（全画像をハッシュし直さずに済むよう、長さ＋数か所のサンプルで判定）
+// ※ハッシュの有無で結果が変わらないよう、常に同じ方式で算出する（変わると「変更あり」と誤検知する）
+function _imageFpKey(s) {
+    if (!isDataImage(s)) return s;
+    const n = s.length;
+    return '~' + n + ':' + s.substr(Math.floor(n / 3), 32) + s.substr(Math.floor(n * 2 / 3), 32) + s.slice(-32);
+}
+
+function _logImages(log) {
+    const arr = Array.isArray(log.images) ? log.images.slice() : [];
+    if (log.image) arr.push(log.image);
+    return arr;
+}
+
+// ==========================================
+// ID・データ検証（同期やインポートで外から入ってくる値は必ずここを通す）
+// ==========================================
+function generateId(prefix) {
+    const rnd = (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+    return prefix + Date.now().toString(36) + rnd.slice(0, 12);
+}
+function isSafeId(id) { return typeof id === 'string' && SAFE_ID_RE.test(id); }
+
+function _fnv1a(str) {
+    let h1 = 0x811c9dc5, h2 = 0x01000193 ^ str.length;
+    for (let i = 0; i < str.length; i++) {
+        const c = str.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 16777619);
+        h2 = Math.imul(h2 ^ c, 2246822519);
+    }
+    return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+}
+// ID を持たない旧データの記録には、内容から決まる同じIDを全端末で振る（重複を防ぐため）
+function legacyLogId(dateStr, log, counter) {
+    const base = 'lg_' + _fnv1a(`${dateStr}|${log.time || ''}|${log.text || ''}|${log.category || ''}`);
+    const n = counter.get(base) || 0;
+    counter.set(base, n + 1);
+    return n ? `${base}_${n}` : base;
+}
+
+const _IMG_REF_OK_RE = /^(SBIMG:[A-Za-z0-9_\/.-]+|idbimg:[a-f0-9]{64}|https:\/\/[^"'<>\s]+)$/;
+function sanitizeImageValue(s) {
+    if (typeof s !== 'string') return null;
+    if (isDataImage(s)) return isValidDataImage(s) ? s : null;
+    return _IMG_REF_OK_RE.test(s) ? s : null;
+}
+
+function sanitizeLog(dateStr, raw, counter) {
+    if (!raw || typeof raw !== 'object') return null;
+    const log = {};
+    log.time = typeof raw.time === 'string' && /^\d{1,2}:\d{2}$/.test(raw.time) ? raw.time : '00:00';
+    log.text = typeof raw.text === 'string' ? raw.text : '';
+    log.category = typeof raw.category === 'string' && raw.category ? raw.category : 'ライフログ';
+    log.slackType = (raw.slackType === 'incoming' || raw.slackType === 'outgoing') ? raw.slackType : null;
+    if (raw.isSlack && !log.slackType) log.slackType = 'incoming';
+    log.images = _logImages(raw).map(sanitizeImageValue).filter(Boolean);
+    log.id = isSafeId(raw.id) ? raw.id : legacyLogId(dateStr, log, counter);
+    if (typeof raw.updatedAt === 'string' && !isNaN(Date.parse(raw.updatedAt))) log.updatedAt = raw.updatedAt;
+    return log;
+}
+
+function sanitizeDayLogs(dateStr, arr) {
+    if (!Array.isArray(arr)) return [];
+    const counter = new Map();
+    const seen = new Set();
+    const out = [];
+    for (const raw of arr) {
+        const log = sanitizeLog(dateStr, raw, counter);
+        if (!log || seen.has(log.id)) continue;
+        seen.add(log.id);
+        out.push(log);
+    }
+    return out;
+}
+
+function sanitizeJournalData(data) {
+    const out = {};
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return out;
+    for (const d of Object.keys(data)) {
+        if (!DATE_KEY_RE.test(d)) continue;
+        const logs = sanitizeDayLogs(d, data[d]);
+        if (logs.length) out[d] = logs;
+    }
+    return out;
+}
+
+function sanitizeTombstoneMap(m) {
+    const out = {};
+    if (!m || typeof m !== 'object') return out;
+    for (const k of Object.keys(m)) {
+        if (isSafeId(k) && typeof m[k] === 'string' && !isNaN(Date.parse(m[k]))) out[k] = m[k];
+    }
+    return out;
+}
+
+function sanitizeNote(raw) {
+    if (!raw || typeof raw !== 'object' || !isSafeId(raw.id)) return null;
+    const iso = (v) => (typeof v === 'string' && !isNaN(Date.parse(v))) ? v : null;
+    const status = ['active', 'permanent', 'archive', 'trash'].includes(raw.status) ? raw.status : 'archive';
+    let content = typeof raw.content === 'string' ? raw.content : '';
+    if (typeof sanitizeNoteHtml === 'function') content = sanitizeNoteHtml(content);
+    return {
+        id: raw.id,
+        title: typeof raw.title === 'string' ? raw.title : '',
+        content,
+        category: typeof raw.category === 'string' && raw.category ? raw.category : 'ライフログ',
+        status,
+        linkedNoteIds: Array.isArray(raw.linkedNoteIds) ? raw.linkedNoteIds.filter(isSafeId) : [],
+        createdAt: iso(raw.createdAt) || iso(raw.updatedAt) || new Date().toISOString(),
+        updatedAt: iso(raw.updatedAt) || iso(raw.createdAt) || new Date().toISOString()
+    };
+}
+
+// ==========================================
+// 変更検知（どの記録が追加・変更・削除されたかを保存時に判定する）
+// ==========================================
+// journalTombstones: { "YYYY-MM-DD": { logId: 削除時刻ISO } }  削除を他端末へ伝えるための印
+// notebookTombstones: { noteId: 削除時刻ISO }
+let journalTombstones = {};
+let notebookTombstones = {};
+const _journalFp = new Map();  // logId -> "date|内容の指紋"
+const _notebookFp = new Map(); // noteId -> 内容の指紋
+let _localChangeListener = null;
+function setLocalChangeListener(fn) { _localChangeListener = fn; }
+function _notifyLocalChange(kind, keys) {
+    if (_localChangeListener && keys && keys.size) {
+        try { _localChangeListener(kind, keys); } catch (e) { console.error(e); }
+    }
+}
+
+function journalLogFp(dateStr, log) {
+    const o = {};
+    for (const k of Object.keys(log).sort()) {
+        if (k === 'updatedAt') continue;
+        let v = log[k];
+        if (k === 'images' && Array.isArray(v)) v = v.map(_imageFpKey);
+        else if (k === 'image') v = _imageFpKey(v);
+        o[k] = v;
+    }
+    return dateStr + '|' + JSON.stringify(o);
+}
+
+// 本文の指紋はノートごとにキャッシュ（同じ本文文字列なら正規表現をかけ直さない）
+let _nbFpContentCache = new Map();
+function _contentFpKey(content) {
+    if (!content || content.indexOf('data:image') === -1) return content || '';
+    let v = _nbFpContentCache.get(content);
+    if (v === undefined) { v = content.replace(DATA_URI_RE, _imageFpKey); _nbFpContentCache.set(content, v); }
+    return v;
+}
+function _pruneFpContentCache() {
+    const live = new Set(notebookData.map(n => n.content));
+    for (const k of [..._nbFpContentCache.keys()]) if (!live.has(k)) _nbFpContentCache.delete(k);
+}
+function notebookFp(n) {
+    const o = {};
+    for (const k of Object.keys(n).sort()) {
+        if (k === 'updatedAt') continue;
+        o[k] = (k === 'content') ? _contentFpKey(n[k]) : n[k];
+    }
+    return JSON.stringify(o);
+}
+
+// 現在の内容を「同期済み／保存済みの基準」として記録（変更扱いにしない）
+function rebaselineJournal(dates = null) {
+    if (dates === null) {
+        _journalFp.clear();
+        for (const d of Object.keys(journalData)) for (const log of journalData[d]) _journalFp.set(log.id, journalLogFp(d, log));
+        return;
+    }
+    const ds = new Set(dates);
+    for (const [id, fp] of _journalFp) if (ds.has(fp.slice(0, 10))) _journalFp.delete(id);
+    for (const d of ds) for (const log of (journalData[d] || [])) _journalFp.set(log.id, journalLogFp(d, log));
+}
+function rebaselineNotebooks(ids = null) {
+    if (ids === null) {
+        _notebookFp.clear();
+        for (const n of notebookData) _notebookFp.set(n.id, notebookFp(n));
+        return;
+    }
+    for (const id of ids) {
+        const n = notebookData.find(x => x.id === id);
+        if (n) _notebookFp.set(id, notebookFp(n)); else _notebookFp.delete(id);
+    }
+}
+
+function _trackJournalChanges() {
+    const now = new Date().toISOString();
+    const changed = new Set();
+    const seen = new Set();
+    for (const d of Object.keys(journalData)) {
+        const logs = journalData[d];
+        if (!Array.isArray(logs) || logs.length === 0) { delete journalData[d]; continue; }
+        for (const log of logs) {
+            if (!isSafeId(log.id) || seen.has(log.id)) log.id = generateId('lg_');
+            seen.add(log.id);
+            const fp = journalLogFp(d, log);
+            const prev = _journalFp.get(log.id);
+            if (prev !== fp) {
+                log.updatedAt = now;
+                changed.add(d);
+                if (prev && prev.slice(0, 10) !== d) changed.add(prev.slice(0, 10));
+                _journalFp.set(log.id, fp);
+                if (journalTombstones[d] && journalTombstones[d][log.id]) delete journalTombstones[d][log.id];
+            }
+        }
+    }
+    for (const [id, fp] of _journalFp) {
+        if (seen.has(id)) continue;
+        const d = fp.slice(0, 10);
+        (journalTombstones[d] = journalTombstones[d] || {})[id] = now;
+        changed.add(d);
+        _journalFp.delete(id);
+    }
+    return changed;
+}
+
+function _trackNotebookChanges() {
+    const now = new Date().toISOString();
+    const changed = new Set();
+    const seen = new Set();
+    for (const n of notebookData) {
+        if (!isSafeId(n.id) || seen.has(n.id)) n.id = generateId('nb_');
+        seen.add(n.id);
+        const fp = notebookFp(n);
+        if (_notebookFp.get(n.id) !== fp) {
+            n.updatedAt = now;
+            changed.add(n.id);
+            _notebookFp.set(n.id, fp);
+            delete notebookTombstones[n.id];
+        }
+    }
+    for (const id of [..._notebookFp.keys()]) {
+        if (seen.has(id)) continue;
+        notebookTombstones[id] = now;
+        changed.add(id);
+        _notebookFp.delete(id);
+    }
+    return changed;
+}
+
+// ==========================================
+// 永続化（画像は別ストアへ、本体データは参照のみ）
+// ==========================================
+function _toIdbRef(s, newImgs) {
+    if (!isDataImage(s)) return s;
+    const h = _hashByData.get(s);
+    if (!h) return s; // 念のため（通常は事前に ensureImageHashes 済み）
+    if (!_storedImageHashes.has(h)) newImgs.set(h, s);
+    return IDB_IMG_PREFIX + h;
+}
+
+async function persistJournal() {
+    const all = [];
+    for (const d of Object.keys(journalData)) for (const log of journalData[d]) all.push(..._logImages(log));
+    await ensureImageHashes(all);
+
+    const newImgs = new Map();
+    const stored = {};
+    for (const d of Object.keys(journalData)) {
+        stored[d] = journalData[d].map(log => {
+            const c = Object.assign({}, log);
+            c.images = _logImages(log).map(s => _toIdbRef(s, newImgs));
+            delete c.image;
+            return c;
+        });
+    }
+    const db = await initDB();
+    const tx = db.transaction([STORE_NAME, IMG_STORE], 'readwrite');
+    const imgStore = tx.objectStore(IMG_STORE);
+    for (const [h, data] of newImgs) imgStore.put(data, h);
+    tx.objectStore(STORE_NAME).put(stored, 'journalData');
+    tx.objectStore(STORE_NAME).put(journalTombstones, 'journalTombstones');
+    await _txDone(tx);
+    for (const h of newImgs.keys()) _storedImageHashes.add(h);
+}
+
+let _nbPersistCache = new Map();
+async function persistNotebooks() {
+    const nextCache = new Map();
+    const newImgs = new Map();
+    const stored = [];
+    for (const n of notebookData) {
+        const c = Object.assign({}, n);
+        const content = n.content || '';
+        if (content.indexOf('data:image') !== -1) {
+            let entry = _nbPersistCache.get(content);
+            if (!entry) {
+                const uris = content.match(DATA_URI_RE) || [];
+                await ensureImageHashes(uris);
+                entry = { uris };
+            }
+            nextCache.set(content, entry);
+            c.content = content.replace(DATA_URI_RE, m => _toIdbRef(m, newImgs));
+        }
+        stored.push(c);
+    }
+    _nbPersistCache = nextCache;
+    _pruneFpContentCache();
+
+    const db = await initDB();
+    const tx = db.transaction([STORE_NAME, IMG_STORE], 'readwrite');
+    const imgStore = tx.objectStore(IMG_STORE);
+    for (const [h, data] of newImgs) imgStore.put(data, h);
+    tx.objectStore(STORE_NAME).put(stored, 'notebookData');
+    tx.objectStore(STORE_NAME).put(notebookTombstones, 'notebookTombstones');
+    await _txDone(tx);
+    for (const h of newImgs.keys()) _storedImageHashes.add(h);
+}
+
+// アプリ側（ui.js / notebooks.js）から呼ばれる保存関数。
+// 変更点を検知して、更新時刻・削除の印を付けたうえで保存し、同期モジュールへ通知する。
+async function saveJournalData() {
+    const changed = _trackJournalChanges();
+    await persistJournal();
+    _notifyLocalChange('journal', changed);
+}
+async function saveNotebookData() {
+    const changed = _trackNotebookChanges();
+    await persistNotebooks();
+    _notifyLocalChange('notebook', changed);
+}
+
+// 起動時の読み込み：images ストアから画像を戻す
+async function loadImageStore() {
+    const db = await initDB();
+    const tx = db.transaction(IMG_STORE, 'readonly');
+    const store = tx.objectStore(IMG_STORE);
+    const [keys, vals] = await Promise.all([
+        new Promise((res, rej) => { const r = store.getAllKeys(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }),
+        new Promise((res, rej) => { const r = store.getAll(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); })
+    ]);
+    keys.forEach((h, i) => {
+        if (typeof vals[i] === 'string') { registerImage(h, vals[i]); _storedImageHashes.add(h); }
     });
 }
 
-function setDBData(key, value) {
-    return new Promise(async (resolve, reject) => {
-        try {
-            const db = await initDB();
-            const tx = db.transaction(STORE_NAME, 'readwrite');
-            const store = tx.objectStore(STORE_NAME);
-            const req = store.put(value, key);
-            req.onsuccess = () => resolve();
-            req.onerror = () => reject(req.error);
-        } catch (e) { reject(e); }
-    });
+function _resolveIdbRef(s) {
+    if (typeof s === 'string' && s.startsWith(IDB_IMG_PREFIX)) {
+        return _dataByHash.get(s.slice(IDB_IMG_PREFIX.length)) || s;
+    }
+    return s;
+}
+function hydrateJournalImages(data) {
+    for (const d of Object.keys(data)) for (const log of data[d]) {
+        log.images = _logImages(log).map(_resolveIdbRef);
+        delete log.image;
+    }
+    return data;
+}
+function hydrateNoteContent(content) {
+    if (!content || content.indexOf(IDB_IMG_PREFIX) === -1) return content;
+    return content.replace(IDB_REF_RE, (m, h) => _dataByHash.get(h) || m);
 }
 
-function deleteDBData(key) {
-    return new Promise(async (resolve, reject) => {
-        try {
-            const db = await initDB();
-            const tx = db.transaction(STORE_NAME, 'readwrite');
-            const store = tx.objectStore(STORE_NAME);
-            const req = store.delete(key);
-            req.onsuccess = () => resolve();
-            req.onerror = () => reject(req.error);
-        } catch (e) { reject(e); }
-    });
+// どこからも参照されなくなった画像を images ストアから掃除する（保存済みレコードを基準に同一トランザクション内で判定）
+async function garbageCollectImages() {
+    try {
+        const db = await initDB();
+        const tx = db.transaction([STORE_NAME, IMG_STORE], 'readwrite');
+        const app = tx.objectStore(STORE_NAME);
+        const imgs = tx.objectStore(IMG_STORE);
+        const get = (store, key) => new Promise((res, rej) => { const r = store.get(key); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+        const [j, n, keys] = await Promise.all([
+            get(app, 'journalData'), get(app, 'notebookData'),
+            new Promise((res, rej) => { const r = imgs.getAllKeys(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); })
+        ]);
+        const text = JSON.stringify(j || {}) + JSON.stringify(n || []);
+        const used = new Set();
+        let m; const re = new RegExp(IDB_REF_RE.source, 'g');
+        while ((m = re.exec(text))) used.add(m[1]);
+        for (const h of keys) if (!used.has(h)) { imgs.delete(h); _storedImageHashes.delete(h); }
+        await _txDone(tx);
+    } catch (e) { console.warn('画像ストアの掃除に失敗しました', e); }
 }
-
-async function saveNotebookData() { await setDBData('notebookData', notebookData); }
-async function saveJournalData() { await setDBData('journalData', journalData); }
 
 async function purgeTodoFromStorage() {
     try {
@@ -153,8 +566,19 @@ async function purgeTodoFromStorage() {
 // ==========================================
 // タイプ管理関数 (追加・リネーム・削除・順序保持)
 // ==========================================
+// 設定（タイプ・カテゴリ等）の変更時刻。ユーザー操作による変更のときだけ更新し、同期時の新旧判定に使う
+const SETTINGS_EDITED_AT_KEY = 'daily_journal_settings_edited_at';
+let _suppressSettingsDirty = false;
+function markSettingsEdited() {
+    if (_suppressSettingsDirty) return;
+    localStorage.setItem(SETTINGS_EDITED_AT_KEY, new Date().toISOString());
+    _notifyLocalChange('settings', new Set(['settings']));
+}
+function getSettingsEditedAt() { return localStorage.getItem(SETTINGS_EDITED_AT_KEY) || ''; }
+
 function saveAppTypes() {
     localStorage.setItem('daily_journal_types', JSON.stringify(appTypes));
+    markSettingsEdited();
 }
 
 function addNewType(name) {
@@ -298,6 +722,12 @@ async function renameCategory(oldName, newName) {
 // Migrations & Helpers
 // ==========================================
 async function syncAndMigrateCategories() {
+    // 起動時・同期時の自動補正は「ユーザーの編集」ではないので、同期上の変更時刻は進めない
+    _suppressSettingsDirty = true;
+    try { await _syncAndMigrateCategoriesInner(); } finally { _suppressSettingsDirty = false; }
+}
+
+async function _syncAndMigrateCategoriesInner() {
     let typesUpdated = false;
 
     if (!Array.isArray(appTypes) || appTypes.length === 0) {
@@ -382,9 +812,9 @@ async function syncAndMigrateCategories() {
     if (notebookUpdated) await saveNotebookData();
 }
 
-function saveCategories() { localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); }
-function saveTypeSlackSettings() { localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); }
-function saveTypeNotebookSettings() { localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); }
+function saveCategories() { localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); markSettingsEdited(); }
+function saveTypeSlackSettings() { localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); markSettingsEdited(); }
+function saveTypeNotebookSettings() { localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); markSettingsEdited(); }
 function isSlackEnabledForType(type) { return typeSlackSettings[type] !== undefined ? !!typeSlackSettings[type] : false; }
 
 function applyGalleryColumnsSetting() {
@@ -479,6 +909,10 @@ function toggleTheme() {
 // ==========================================
 // 起動処理
 // ==========================================
+// 同期モジュールは、ローカルデータの読み込みが終わるまで待ってから動き出す
+let _resolveAppDataReady;
+const appDataReady = new Promise(r => { _resolveAppDataReady = r; });
+
 window.onload = async () => {
     applyTheme(); 
     applyHideEmptyCardsSetting();
@@ -487,22 +921,47 @@ window.onload = async () => {
 
     await purgeTodoFromStorage();
 
-    const loadedJournal = await getDBData('journalData');
-    const loadedNotebook = await getDBData('notebookData');
+    try { await loadImageStore(); } catch (e) { console.warn('画像ストアの読み込みに失敗しました', e); }
+
+    let loadedJournal = await getDBData('journalData');
+    let loadedNotebook = await getDBData('notebookData');
 
     let needsMigration = false;
-    
-    if (loadedJournal) { journalData = loadedJournal; } 
-    else { journalData = JSON.parse(localStorage.getItem('daily_journal_data')) || {}; needsMigration = true; }
-    
-    if (loadedNotebook) { notebookData = loadedNotebook; } 
-    else { notebookData = JSON.parse(localStorage.getItem('daily_journal_notebook')) || []; needsMigration = true; }
+    if (!loadedJournal) {
+        try { loadedJournal = JSON.parse(localStorage.getItem('daily_journal_data')) || {}; } catch (e) { loadedJournal = {}; }
+        needsMigration = true;
+    }
+    if (!loadedNotebook) {
+        try { loadedNotebook = JSON.parse(localStorage.getItem('daily_journal_notebook')) || []; } catch (e) { loadedNotebook = []; }
+        needsMigration = true;
+    }
 
-    if (needsMigration) {
-        await saveJournalData();
-        await saveNotebookData();
-        localStorage.removeItem('daily_journal_data');
-        localStorage.removeItem('daily_journal_notebook');
+    // 旧形式（画像をBase64のまま丸ごと保存）なら、画像ストア分離のために一度保存し直す
+    const hadInlineImages = JSON.stringify(loadedJournal).indexOf('"data:image') !== -1
+        || (Array.isArray(loadedNotebook) && loadedNotebook.some(n => n && typeof n.content === 'string' && n.content.indexOf('data:image') !== -1));
+    // 旧形式（記録IDなし）なら、ID付与後に保存し直す
+    const hadLogsWithoutId = Object.values(loadedJournal || {}).some(arr => Array.isArray(arr) && arr.some(l => l && !l.id));
+
+    journalData = hydrateJournalImages(sanitizeJournalData(loadedJournal));
+    notebookData = (Array.isArray(loadedNotebook) ? loadedNotebook : []).map(sanitizeNote).filter(Boolean);
+    notebookData.forEach(n => { n.content = hydrateNoteContent(n.content); });
+
+    const jt = await getDBData('journalTombstones');
+    journalTombstones = {};
+    if (jt && typeof jt === 'object') for (const d of Object.keys(jt)) if (DATE_KEY_RE.test(d)) journalTombstones[d] = sanitizeTombstoneMap(jt[d]);
+    notebookTombstones = sanitizeTombstoneMap(await getDBData('notebookTombstones'));
+
+    // 読み込んだ内容を「未変更」の基準にする（ここより後の保存で差分が検知される）
+    rebaselineJournal(null);
+    rebaselineNotebooks(null);
+
+    if (needsMigration || hadInlineImages || hadLogsWithoutId) {
+        await persistJournal();
+        await persistNotebooks();
+        if (needsMigration) {
+            localStorage.removeItem('daily_journal_data');
+            localStorage.removeItem('daily_journal_notebook');
+        }
     }
 
     await syncAndMigrateCategories();
@@ -528,4 +987,6 @@ window.onload = async () => {
     renderRightCards(); 
     setupMiniCalSwipe(); 
     document.body.classList.add('ready');
+    _resolveAppDataReady();
+    setTimeout(garbageCollectImages, 8000);
 };
