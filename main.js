@@ -59,7 +59,7 @@ function applyPhotoQualitySetting() {
     const sel = document.getElementById('photoQualitySelect');
     if (sel) sel.value = photoQuality;
     const p = getPhotoQualityPreset();
-    document.querySelectorAll('.photo-size-notice').forEach(el => { el.textContent = `自動縮小・${p.label}`; });
+    if (typeof updateModalPhotoQualityUI === 'function') { updateModalPhotoQualityUI('add'); updateModalPhotoQualityUI('edit'); }
     const info = document.getElementById('photoQualityLastInfo');
     if (info) {
         let last = null;
@@ -72,6 +72,11 @@ function applyPhotoQualitySetting() {
 function changePhotoQuality(val) {
     photoQuality = PHOTO_QUALITY_PRESETS[val] ? val : 'standard';
     localStorage.setItem('daily_journal_photo_quality', photoQuality);
+    // 投稿画面を開いていなければ、次に開いたときの既定もこの値にする
+    if (typeof resetModalPhotoQuality === 'function') {
+        if (!document.getElementById('addModal').classList.contains('active')) resetModalPhotoQuality('add');
+        if (!document.getElementById('editModal').classList.contains('active')) resetModalPhotoQuality('edit');
+    }
     applyPhotoQualitySetting();
 }
 

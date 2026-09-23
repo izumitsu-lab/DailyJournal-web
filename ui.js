@@ -151,9 +151,9 @@ function parseLinksAndText(text) {
 
 function escapeHtml(str) { return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;'); }
 
-// 写真を追加するときの縮小。大きさ・画質は設定の「写真の保存サイズ」に従う
-function resizeImageFile(file, maxDimension, quality) {
-    const preset = getPhotoQualityPreset();
+// 写真を追加するときの縮小。大きさ・画質は「写真の保存サイズ」のプリセットに従う（既定は設定画面の値）
+function resizeImageFile(file, maxDimension, quality, presetKey = photoQuality) {
+    const preset = PHOTO_QUALITY_PRESETS[presetKey] || getPhotoQualityPreset();
     if (!maxDimension) maxDimension = preset.maxDimension;
     if (!quality) quality = preset.quality;
     return new Promise((resolve, reject) => {
@@ -169,9 +169,9 @@ function resizeImageFile(file, maxDimension, quality) {
                 const cvs = document.createElement('canvas'); cvs.width = w; cvs.height = h;
                 cvs.getContext('2d').drawImage(img, 0, 0, w, h);
                 const out = cvs.toDataURL('image/jpeg', quality);
+                cvs.width = 0; cvs.height = 0;
                 try {
-                    const b64 = out.length - out.indexOf(',') - 1;
-                    localStorage.setItem('daily_journal_last_photo', JSON.stringify({ bytes: Math.round(b64 * 3 / 4), w, h, preset: photoQuality }));
+                    localStorage.setItem('daily_journal_last_photo', JSON.stringify({ bytes: dataUrlBytes(out), w, h, preset: presetKey }));
                     applyPhotoQualitySetting();
                 } catch (e) {}
                 resolve(out);
@@ -181,30 +181,97 @@ function resizeImageFile(file, maxDimension, quality) {
         reader.onerror = reject; reader.readAsDataURL(file);
     });
 }
+function dataUrlBytes(d) { return (typeof d === 'string' && d.startsWith('data:')) ? Math.round((d.length - d.indexOf(',') - 1) * 3 / 4) : 0; }
+function formatKB(bytes) { return bytes >= 1024 * 1024 ? (bytes / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(bytes / 1024)) + 'KB'; }
+
+// ------------------------------------------
+// 投稿画面（追記・編集）での画質の選択
+// ------------------------------------------
+// 設定画面の値は「既定」。投稿画面ではその投稿に追加する写真だけ画質を変えられる（画面を開き直すと既定に戻る）。
+// 写真を選んだ後に画質を変えても反映できるよう、投稿が終わるまで元の写真ファイルを覚えておき、作り直す。
+// ※元のファイルは端末上のファイルへの参照なので、覚えておいてもメモリはほとんど使わない。保存済みの写真は対象外。
+const _modalPhotoQuality = { add: 'standard', edit: 'standard' };
+const _photoSourceFiles = { add: new Map(), edit: new Map() }; // 縮小後の dataURL -> 元のファイル
+const _photoJobs = { add: Promise.resolve(), edit: Promise.resolve() };
+const _photoBusy = { add: 0, edit: 0 };
+function _photoList(m) { return m === 'add' ? currentAddPhotos : currentEditPhotos; }
+function _runPhotoJob(m, fn) {
+    _photoBusy[m]++; updateModalPhotoQualityUI(m);
+    const job = _photoJobs[m].then(fn).catch(e => console.warn('写真の処理に失敗しました', e))
+        .finally(() => { _photoBusy[m]--; updateModalPhotoQualityUI(m); });
+    _photoJobs[m] = job;
+    return job;
+}
+function waitPhotoJobs(m) { return _photoJobs[m]; }
+function resetModalPhotoQuality(m) {
+    _modalPhotoQuality[m] = photoQuality;
+    _photoSourceFiles[m].clear();
+    updateModalPhotoQualityUI(m);
+}
+function updateModalPhotoQualityUI(m) {
+    const sel = document.getElementById(m === 'add' ? 'addPhotoQualitySelect' : 'editPhotoQualitySelect');
+    if (!sel) return;
+    sel.value = _modalPhotoQuality[m];
+    sel.disabled = _photoBusy[m] > 0;
+    sel.classList.toggle('is-busy', _photoBusy[m] > 0);
+    sel.classList.toggle('is-changed', _modalPhotoQuality[m] !== photoQuality);
+}
+function changeModalPhotoQuality(m, val) {
+    if (!PHOTO_QUALITY_PRESETS[val] || val === _modalPhotoQuality[m]) { updateModalPhotoQualityUI(m); return; }
+    _modalPhotoQuality[m] = val;
+    // すでに選んである写真（この画面で追加したもの）を、新しい画質で作り直す
+    return _runPhotoJob(m, async () => {
+        const list = _photoList(m);
+        const srcMap = _photoSourceFiles[m];
+        for (let i = 0; i < list.length; i++) {
+            const file = srcMap.get(list[i]);
+            if (!file) continue; // 保存済みの写真は変えない
+            const preset = _modalPhotoQuality[m];
+            const d = await resizeImageFile(file, 0, 0, preset);
+            const cur = _photoList(m);
+            const idx = cur.indexOf(list[i]);
+            if (idx === -1) continue; // 処理中に削除された
+            srcMap.delete(list[i]);
+            cur[idx] = d; srcMap.set(d, file);
+        }
+        renderPhotoPreviews(m);
+    });
+}
 function triggerPhotoSelect(m) { document.getElementById(m === 'add' ? 'addPhotoInput' : 'editPhotoInput').click(); }
-async function handlePhotosSelected(e, m) {
-    const files = Array.from(e.target.files); if (!files.length) return;
-    for (const f of files) {
-        try {
-            const b = await resizeImageFile(f);
-            if (m === 'add') currentAddPhotos.push(b); else currentEditPhotos.push(b);
-        } catch (err) {}
-    }
-    renderPhotoPreviews(m); e.target.value = "";
+function handlePhotosSelected(e, m) {
+    const files = Array.from(e.target.files); e.target.value = "";
+    if (!files.length) return Promise.resolve();
+    return _runPhotoJob(m, async () => {
+        for (const f of files) {
+            try {
+                const d = await resizeImageFile(f, 0, 0, _modalPhotoQuality[m]);
+                _photoList(m).push(d);
+                _photoSourceFiles[m].set(d, f);
+            } catch (err) {}
+        }
+        renderPhotoPreviews(m);
+    });
 }
 function renderPhotoPreviews(m) {
     const c = document.getElementById(m === 'add' ? 'addPhotoPreviewsContainer' : 'editPhotoPreviewsContainer');
-    const p = m === 'add' ? currentAddPhotos : currentEditPhotos;
+    const p = _photoList(m);
     c.innerHTML = "";
     if (!p.length) { c.classList.remove('has-photos'); return; }
     c.classList.add('has-photos');
     p.forEach((d, i) => {
         const div = document.createElement('div'); div.className = 'photo-preview-item';
-        div.innerHTML = `<img ${imgSrcAttrs(d, 240)}><button class="photo-preview-del-btn" onclick="removePhotoAtIndex('${m}', ${i})">✕</button>`;
+        const bytes = dataUrlBytes(d);
+        const cap = bytes ? formatKB(bytes) : '保存済み';
+        div.innerHTML = `<img ${imgSrcAttrs(d, 240)}><span class="photo-preview-size${bytes ? '' : ' saved'}">${cap}</span><button class="photo-preview-del-btn" onclick="removePhotoAtIndex('${m}', ${i})">✕</button>`;
         c.appendChild(div);
     });
 }
-function removePhotoAtIndex(m, i) { if (m === 'add') currentAddPhotos.splice(i, 1); else currentEditPhotos.splice(i, 1); renderPhotoPreviews(m); }
+function removePhotoAtIndex(m, i) {
+    const list = _photoList(m);
+    const [d] = list.splice(i, 1);
+    if (d) _photoSourceFiles[m].delete(d);
+    renderPhotoPreviews(m);
+}
 // 画面下部に一時的なお知らせを出す（alert と違い、作業を止めない）
 function showToast(message, ms = 7000) {
     let box = document.getElementById('appToastBox');
@@ -1264,7 +1331,7 @@ function openAddModal() {
     renderModalCategoryChips('add', selectedAddCategory); 
     setMessageType('add', 'normal'); 
     updateMsgTypeVisibility('add', selectedAddCategory);
-    currentAddPhotos = []; renderPhotoPreviews('add'); openModal('addModal');
+    currentAddPhotos = []; resetModalPhotoQuality('add'); renderPhotoPreviews('add'); openModal('addModal');
     setTimeout(() => document.getElementById('journalInputText').focus(), 200);
 }
 
@@ -1282,7 +1349,7 @@ function openEditModal(dStr, id) {
     const m = log.slackType || (log.isSlack ? 'incoming' : 'normal'); 
     setMessageType('edit', m); 
     updateMsgTypeVisibility('edit', selectedEditCategory);
-    currentEditPhotos = Array.isArray(log.images) ? [...log.images] : (log.image ? [log.image] : []); renderPhotoPreviews('edit');
+    currentEditPhotos = Array.isArray(log.images) ? [...log.images] : (log.image ? [log.image] : []); resetModalPhotoQuality('edit'); renderPhotoPreviews('edit');
     openModal('editModal'); setTimeout(() => document.getElementById('editInputText').focus(), 200);
 }
 
@@ -1300,6 +1367,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('active')
 function outsideClose(e, id) { if (e.target.id === id) closeModal(id); }
 
 async function saveNewLog() {
+    await waitPhotoJobs('add'); // 写真の縮小・作り直しが終わるのを待つ
     const t = document.getElementById('journalInputText').value.trim();
     if (!t && !currentAddPhotos.length) { alert("内容または写真を添付してください。"); return; }
     if (!selectedAddCategory) { alert("カテゴリを選択してください。"); return; }
@@ -1331,6 +1399,7 @@ async function saveNewLog() {
 }
 
 async function saveEditedLog() {
+    await waitPhotoJobs('edit'); // 写真の縮小・作り直しが終わるのを待つ
     const { dateStr: d, id } = currentEditTarget; if (!d || !id) return;
     const target = findLogById(d, id);
     if (!target) { alert("この記録は他の端末で削除されたため、更新できませんでした。"); closeModal('editModal'); renderRightCards(); return; }

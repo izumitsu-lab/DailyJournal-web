@@ -425,7 +425,7 @@
                         <button class="photo-btn" onclick="triggerPhotoSelect('add')">
                             <span>📷 写真を追加</span>
                         </button>
-                        <span class="photo-size-notice">自動縮小</span>
+                        <select class="photo-quality-select" id="addPhotoQualitySelect" title="この投稿に追加する写真の画質（1枚あたりの目安）" onchange="changeModalPhotoQuality('add', this.value)"><option value="high">高画質・約300KB</option><option value="standard">標準・約200KB</option><option value="saver">節約・約130KB</option><option value="minimum">最小・約80KB</option></select>
                     </div>
 
                     <div class="msg-type-pill-group" id="addMsgTypeSegmented">
@@ -597,7 +597,7 @@
                         <button class="photo-btn" onclick="triggerPhotoSelect('edit')">
                             <span>📷 写真を追加</span>
                         </button>
-                        <span class="photo-size-notice">自動縮小</span>
+                        <select class="photo-quality-select" id="editPhotoQualitySelect" title="この投稿に追加する写真の画質（1枚あたりの目安）" onchange="changeModalPhotoQuality('edit', this.value)"><option value="high">高画質・約300KB</option><option value="standard">標準・約200KB</option><option value="saver">節約・約130KB</option><option value="minimum">最小・約80KB</option></select>
                     </div>
 
                     <div class="msg-type-pill-group" id="editMsgTypeSegmented">
