@@ -487,6 +487,7 @@ function _toIdbRef(s, newImgs) {
 }
 
 async function persistJournal() {
+    if (_tabInactive) return;
     const fresh = [];
     for (const d of Object.keys(journalData)) for (const log of journalData[d]) for (const img of _logImages(log)) if (isDataImage(img)) fresh.push(img);
     await ensureImageHashes(fresh);
@@ -528,6 +529,7 @@ async function persistJournal() {
 
 let _nbPersistCache = new Map();
 async function persistNotebooks() {
+    if (_tabInactive) return;
     const nextCache = new Map();
     const newImgs = new Map();
     const stored = [];
@@ -562,11 +564,13 @@ async function persistNotebooks() {
 // アプリ側（ui.js / notebooks.js）から呼ばれる保存関数。
 // 変更点を検知して、更新時刻・削除の印を付けたうえで保存し、同期モジュールへ通知する。
 async function saveJournalData() {
+    if (_tabInactive) return;
     const changed = _trackJournalChanges();
     await persistJournal();
     _notifyLocalChange('journal', changed);
 }
 async function saveNotebookData() {
+    if (_tabInactive) return;
     const changed = _trackNotebookChanges();
     await persistNotebooks();
     _notifyLocalChange('notebook', changed);
@@ -615,6 +619,7 @@ async function getNotebookDataForExport() { return notebookData; }
 
 // どこからも参照されなくなった画像を images ストアから掃除する（保存済みレコードを基準に同一トランザクション内で判定）
 async function garbageCollectImages() {
+    if (_tabInactive) return;
     try {
         const db = await initDB();
         const tx = db.transaction([STORE_NAME, IMG_STORE], 'readwrite');
@@ -652,13 +657,14 @@ async function purgeTodoFromStorage() {
 const SETTINGS_EDITED_AT_KEY = 'daily_journal_settings_edited_at';
 let _suppressSettingsDirty = false;
 function markSettingsEdited() {
-    if (_suppressSettingsDirty) return;
+    if (_suppressSettingsDirty || _tabInactive) return;
     localStorage.setItem(SETTINGS_EDITED_AT_KEY, new Date().toISOString());
     _notifyLocalChange('settings', new Set(['settings']));
 }
 function getSettingsEditedAt() { return localStorage.getItem(SETTINGS_EDITED_AT_KEY) || ''; }
 
 function saveAppTypes() {
+    if (_tabInactive) return;
     localStorage.setItem('daily_journal_types', JSON.stringify(appTypes));
     markSettingsEdited();
 }
@@ -888,9 +894,9 @@ async function _syncAndMigrateCategoriesInner() {
     if (notebookUpdated) await saveNotebookData();
 }
 
-function saveCategories() { localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); markSettingsEdited(); }
-function saveTypeSlackSettings() { localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); markSettingsEdited(); }
-function saveTypeNotebookSettings() { localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); markSettingsEdited(); }
+function saveCategories() { if (_tabInactive) return; localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); markSettingsEdited(); }
+function saveTypeSlackSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); markSettingsEdited(); }
+function saveTypeNotebookSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); markSettingsEdited(); }
 function isSlackEnabledForType(type) { return typeSlackSettings[type] !== undefined ? !!typeSlackSettings[type] : false; }
 
 function applyGalleryColumnsSetting() {
@@ -983,17 +989,60 @@ function toggleTheme() {
 }
 
 // ==========================================
+// 複数タブ対策：最後に開いた（または「このタブで使う」を押した）タブだけが保存・同期する
+// ==========================================
+// 同じ端末の複数タブがそれぞれ全データを保存すると、後から保存したタブの古い内容で上書きされてしまうため。
+const TAB_ID = generateId('tab_');
+let _tabInactive = false;
+const _tabChannel = ('BroadcastChannel' in window) ? new BroadcastChannel('daily-journal-tabs') : null;
+function isTabActive() { return !_tabInactive; }
+
+async function _deactivateTab() {
+    if (_tabInactive) return;
+    // 編集中のノートがあれば、手放す前に保存しておく
+    try {
+        if (typeof currentActiveEditorNotebookId !== 'undefined' && currentActiveEditorNotebookId && typeof saveNotebookContentDirect === 'function') {
+            await saveNotebookContentDirect(currentActiveEditorNotebookId);
+        }
+    } catch (e) { console.warn(e); }
+    _tabInactive = true;
+    if (typeof onTabDeactivated === 'function') { try { onTabDeactivated(); } catch (e) {} }
+    let ov = document.getElementById('tabInactiveOverlay');
+    if (!ov) {
+        ov = document.createElement('div');
+        ov.id = 'tabInactiveOverlay';
+        ov.className = 'tab-inactive-overlay';
+        ov.innerHTML = `<div class="tab-inactive-card"><div style="font-size: 30px;">🗂️</div><div class="tab-inactive-title">別のタブで開かれています</div><div class="tab-inactive-desc">データの上書きを防ぐため、このタブでは保存と同期を停止しました。</div><button type="button" class="modal-btn submit" onclick="location.reload()">このタブで使う</button></div>`;
+        document.body.appendChild(ov);
+    }
+}
+if (_tabChannel) {
+    _tabChannel.onmessage = (e) => {
+        if (e.data && e.data.type === 'claim' && e.data.id !== TAB_ID) _deactivateTab();
+    };
+}
+
+// ==========================================
 // 起動処理
 // ==========================================
 // 同期モジュールは、ローカルデータの読み込みが終わるまで待ってから動き出す
 let _resolveAppDataReady;
 const appDataReady = new Promise(r => { _resolveAppDataReady = r; });
 
-window.onload = async () => {
+// ※以前は window.onload（画像・外部ファイルをすべて読み終えるまで待つ）で起動していたため、
+//   通信が遅いと起動やログイン後の同期開始が遅れていた。DOMの準備ができた時点で起動する。
+async function startApp() {
     applyTheme(); 
     applyHideEmptyCardsSetting();
     applyGalleryColumnsSetting();
     applyDeviceModeSetting();
+
+    // 他のタブに「このタブが使う」と知らせ、そちらの保存が終わるのを少し待ってから読み込む
+    if (_tabChannel) {
+        _tabChannel.postMessage({ type: 'claim', id: TAB_ID });
+        await new Promise(r => setTimeout(r, 300));
+        if (typeof reloadPendingQueue === 'function') reloadPendingQueue();
+    }
 
     await purgeTodoFromStorage();
 
@@ -1065,4 +1114,14 @@ window.onload = async () => {
     document.body.classList.add('ready');
     _resolveAppDataReady();
     setTimeout(garbageCollectImages, 8000);
-};
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { startApp().catch(_startupFailed); });
+else startApp().catch(_startupFailed);
+
+// 起動処理で予期しないエラーが起きた場合：画面は表示し、エラーを知らせる。
+// ※端末内データを読み込めていない可能性があるので、同期は開始しない（空のデータでクラウドや端末内を上書きしないため）
+function _startupFailed(e) {
+    console.error('起動処理でエラーが発生しました', e);
+    document.body.classList.add('ready');
+    if (typeof showToast === 'function') showToast('起動中にエラーが発生しました。表示に問題がある場合は再読み込みしてください。（' + ((e && e.message) || e) + '）', 12000);
+}

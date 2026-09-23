@@ -202,7 +202,8 @@ const IMG_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAA
 function imgSrcAttrs(ref) {
     const h = idbRefHash(ref);
     if (h) return `src="${IMG_PLACEHOLDER}" data-idbimg="${h}"`;
-    return `src="${ref}"`;
+    if (isDataImage(ref)) return `src="${ref}"`;
+    return `src="${IMG_PLACEHOLDER}" data-missing="1"`; // クラウドから取得できなかった画像
 }
 async function openLightboxFromImg(img) {
     if (!img) return;

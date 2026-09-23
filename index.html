@@ -867,15 +867,15 @@
                     <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
                         ※GitHub等に公開しても安全なように、URLとキーはブラウザにのみ保存されます。
                     </div>
-                    <input type="text" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL">
-                    <input type="password" class="settings-text-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;">
+                    <input type="url" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+                    <input type="text" class="settings-text-input masked-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
                     <button type="button" class="data-action-btn primary-btn" style="margin-top: 8px;" onclick="saveSupabaseConfig()">接続設定を保存</button>
                 </div>
 
                 <div class="settings-card-box" id="supabaseAuthBox" style="display: none;">
                     <div class="settings-card-title">👤 アカウント認証</div>
-                    <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス">
-                    <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" style="margin-top: 6px;">
+                    <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="email">
+                    <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" name="password" autocomplete="current-password" style="margin-top: 6px;">
                     <div style="display: flex; gap: 8px; margin-top: 8px;">
                         <button type="button" class="data-action-btn" onclick="signUpSupabase()">新規登録</button>
                         <button type="button" class="data-action-btn primary-btn" onclick="signInSupabase()">ログイン</button>
@@ -907,6 +907,7 @@ CREATE TABLE IF NOT EXISTS app_settings ( user_id UUID PRIMARY KEY REFERENCES au
 ALTER TABLE journals ADD COLUMN IF NOT EXISTS tombstones JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS images_cleaned_at TIMESTAMPTZ;
 UPDATE notebooks SET edited_at = updated_at WHERE edited_at IS NULL;
 -- 3. updated_at はサーバー時刻で付与（端末の時計のずれで差分取得が漏れないように）
 CREATE OR REPLACE FUNCTION set_server_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.updated_at := clock_timestamp(); RETURN NEW; END; $$;
@@ -941,6 +942,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
                         以前の設定ミス等で、画像がStorageではなくデータベース側に直接入ってしまっている場合に使います。本体（このスマホ/PC）に保存されている元データを元に、画像をクラウドStorageへアップロードし直し、データベース側は参照だけの軽い状態にします。
                     </div>
                     <button type="button" class="data-action-btn" onclick="migrateEmbeddedImagesToStorage()">画像をStorageへ再アップロードする</button>
+                </div>
+
+                <div class="settings-card-box" id="supabaseCleanupBox" style="display: none;">
+                    <div class="settings-card-title">🧽 クラウドの不要な画像を削除</div>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
+                        記録やノートを削除しても、クラウド（Storage）上の画像ファイルは残ります。どの記録・ノートからも使われていない画像を探して削除し、容量を空けます。直近7日以内にアップロードされた画像は対象外です。端末内の画像には影響しません。
+                    </div>
+                    <button type="button" class="data-action-btn" onclick="cleanupUnusedCloudImages()">不要な画像を探して削除する</button>
                 </div>
             </div>
 
