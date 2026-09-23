@@ -325,37 +325,49 @@ async function _ensureSchema() {
 // ==========================================
 // 5. 画像（Storage）
 // ==========================================
-function _uploadedKey() { return 'daily_journal_uploaded_images_' + (supabaseUser ? supabaseUser.id : ''); }
-let _uploadedCache = { key: null, set: new Set() };
-function _uploadedSet() {
+// アップロード済み画像の一覧（ハッシュ -> Storage内パス）。ユーザーごとに保持
+function _uploadedKey() { return 'daily_journal_uploaded_paths_' + (supabaseUser ? supabaseUser.id : ''); }
+let _uploadedCache = { key: null, map: {} };
+function _uploadedMap() {
     const k = _uploadedKey();
     if (_uploadedCache.key !== k) {
-        _uploadedCache = { key: k, set: new Set(_safeParseArray(k)) };
+        let m = {};
+        try { m = JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch (e) { m = {}; }
+        _uploadedCache = { key: k, map: m };
     }
-    return _uploadedCache.set;
+    return _uploadedCache.map;
 }
-function _markUploaded(hash) {
-    const s = _uploadedSet();
-    if (s.has(hash)) return;
-    s.add(hash);
-    localStorage.setItem(_uploadedKey(), JSON.stringify([...s]));
+function _markUploaded(hash, path) {
+    const m = _uploadedMap();
+    if (m[hash] === path) return;
+    m[hash] = path;
+    localStorage.setItem(_uploadedKey(), JSON.stringify(m));
 }
 
-// data:image → Storage にアップロードして "SBIMG:<uid>/img_<hash>.<ext>" を返す（アップロード済みなら通信しない）
-async function _toCloudImage(dataUrl) {
-    if (!isDataImage(dataUrl)) return dataUrl;
-    const hash = await hashImage(dataUrl);
-    const ext = (dataUrl.substring(dataUrl.indexOf('/') + 1, dataUrl.indexOf(';')) || 'jpeg').replace(/[^a-z0-9]/gi, '') || 'jpeg';
+// 画像（dataURL または "idbimg:" 参照）→ Storage にアップロードして "SBIMG:<uid>/img_<hash>.<ext>" を返す
+// アップロード済みなら通信せず、画像本体の読み込みもしない
+async function _toCloudImage(img) {
+    let hash = idbRefHash(img);
+    if (hash) {
+        const known = _uploadedMap()[hash];
+        if (known) return SB_IMG_PREFIX + known;
+        img = await getImageData(hash);
+        if (!img) throw new Error('画像が端末内に見つかりません: ' + hash);
+    }
+    if (!isDataImage(img)) return img;
+    if (!hash) hash = await hashImage(img);
+    const known = _uploadedMap()[hash];
+    if (known) return SB_IMG_PREFIX + known;
+
+    const ext = (img.substring(img.indexOf('/') + 1, img.indexOf(';')) || 'jpeg').replace(/[^a-z0-9]/gi, '') || 'jpeg';
     const filePath = `${supabaseUser.id}/img_${hash}.${ext}`;
-    if (_uploadedSet().has(hash)) return SB_IMG_PREFIX + filePath;
-
-    const blob = await (await fetch(dataUrl)).blob();
+    const blob = await (await fetch(img)).blob();
     const { error } = await supabaseClient.storage.from('images').upload(filePath, blob, { upsert: false, contentType: blob.type || `image/${ext}` });
     if (error) {
         const m = `${error.message || ''} ${error.statusCode || ''} ${error.error || ''}`;
         if (!/already exists|Duplicate|409/i.test(m)) throw error;
     }
-    _markUploaded(hash);
+    _markUploaded(hash, filePath);
     return SB_IMG_PREFIX + filePath;
 }
 
@@ -368,25 +380,7 @@ async function _blobToDataUrl(blob) {
     });
 }
 
-// クラウド参照 → 端末で使う data:image。手元に同じ画像があれば通信しない。失敗時は例外（その行は次回再取得）
-async function _resolveCloudImage(ref) {
-    if (typeof ref !== 'string') throw new Error('invalid image');
-    if (isDataImage(ref)) {
-        if (!isValidDataImage(ref)) throw new Error('invalid data URI');
-        await hashImage(ref);
-        return ref;
-    }
-    if (ref.startsWith('idbimg:')) {
-        const d = getImageByHash(ref.slice(7));
-        if (d) return d;
-        throw new Error('missing local image');
-    }
-    const m = ref.match(/img_([a-f0-9]{64})\./);
-    if (m) {
-        const local = getImageByHash(m[1]);
-        if (local) return local;
-    }
-
+async function _downloadCloudImage(ref) {
     let blob;
     if (ref.startsWith(SB_IMG_PREFIX)) {
         const path = ref.slice(SB_IMG_PREFIX.length);
@@ -402,11 +396,47 @@ async function _resolveCloudImage(ref) {
     } else {
         throw new Error('unsupported image ref');
     }
-
     const dataUrl = await _blobToDataUrl(blob);
     if (!isValidDataImage(dataUrl)) throw new Error('downloaded file is not an image');
-    if (m) { registerImage(m[1], dataUrl); _markUploaded(m[1]); }
-    else await hashImage(dataUrl);
+    return dataUrl;
+}
+
+// クラウド側の画像値 → 端末の画像ストアに保存して "idbimg:<hash>" を返す（ジャーナル用）
+// 手元に同じ画像があれば通信しない。失敗時は例外（その行は次回やり直す）
+async function _resolveCloudImageToRef(ref) {
+    if (typeof ref !== 'string') throw new Error('invalid image');
+    const own = idbRefHash(ref);
+    if (own) { if (hasStoredImage(own)) return ref; throw new Error('missing local image'); }
+    if (isDataImage(ref)) {
+        if (!isValidDataImage(ref)) throw new Error('invalid data URI');
+        const h = await hashImage(ref);
+        await storeImage(h, ref);
+        return IDB_IMG_PREFIX + h;
+    }
+    const m = ref.match(/img_([a-f0-9]{64})\./);
+    if (m && ref.startsWith(SB_IMG_PREFIX)) _markUploaded(m[1], ref.slice(SB_IMG_PREFIX.length));
+    if (m && hasStoredImage(m[1])) return IDB_IMG_PREFIX + m[1];
+    const dataUrl = await _downloadCloudImage(ref);
+    const h = m ? m[1] : await sha256Hex(dataUrl);
+    await storeImage(h, dataUrl);
+    return IDB_IMG_PREFIX + h;
+}
+
+// クラウド側の画像値 → dataURL（ノート本文用。ノートは画像を読み込んだ状態で持つ）
+async function _resolveCloudImageToData(ref) {
+    if (typeof ref !== 'string') throw new Error('invalid image');
+    const own = idbRefHash(ref);
+    if (own) { const d = await getImageData(own); if (d) return d; throw new Error('missing local image'); }
+    if (isDataImage(ref)) {
+        if (!isValidDataImage(ref)) throw new Error('invalid data URI');
+        await hashImage(ref);
+        return ref;
+    }
+    const m = ref.match(/img_([a-f0-9]{64})\./);
+    if (m && ref.startsWith(SB_IMG_PREFIX)) _markUploaded(m[1], ref.slice(SB_IMG_PREFIX.length));
+    if (m && hasStoredImage(m[1])) { const d = await getImageData(m[1]); if (d) { registerImage(m[1], d); return d; } }
+    const dataUrl = await _downloadCloudImage(ref);
+    if (m) registerImage(m[1], dataUrl); else await hashImage(dataUrl);
     return dataUrl;
 }
 
@@ -445,7 +475,7 @@ async function mergeRemoteJournalRow(row) {
         if (!need.length) break;
         for (const r of need) {
             const imgs = [];
-            for (const ref of r.images) imgs.push(await _resolveCloudImage(ref));
+            for (const ref of r.images) imgs.push(await _resolveCloudImageToRef(ref));
             resolved.set(r.id, Object.assign({}, r, { images: imgs }));
         }
     }
@@ -491,7 +521,7 @@ async function _resolveNoteContent(html) {
     let content = sanitizeNoteHtml(html || '');
     const refs = new Set([...(content.match(_SBIMG_IN_HTML_RE) || []), ...(content.match(_LEGACY_PUBLIC_IMG_RE) || [])]);
     const map = new Map();
-    for (const ref of refs) map.set(ref, await _resolveCloudImage(ref));
+    for (const ref of refs) map.set(ref, await _resolveCloudImageToData(ref));
     if (map.size) content = content.replace(_SBIMG_IN_HTML_RE, m => map.get(m) || m).replace(_LEGACY_PUBLIC_IMG_RE, m => map.get(m) || m);
     const inline = content.match(DATA_URI_RE) || [];
     await ensureImageHashes(inline);
@@ -501,11 +531,30 @@ async function _resolveNoteContent(html) {
 async function mergeRemoteNotebookRow(row) {
     if (!row || !isSafeId(row.id)) return false;
     const id = row.id;
-    const remoteTime = row.edited_at || row.updated_at || '';
+    // Postgres の timestamptz は "…+00:00" 形式で返るため、アプリ側の "…Z" 形式に揃えてから比較する
+    const remoteTime = _normIso(row.edited_at || row.updated_at);
     const localTime = () => {
         const n = notebookData.find(x => x.id === id);
         return n ? (n.updatedAt || '') : (notebookTombstones[id] || '');
     };
+
+    // このノートを編集中に、他の端末での更新が届いた場合（自分の送信のエコーは除く）
+    // → 画面の編集内容は上書きせず、相手の版を失わないよう別途保全する（notebooks.js 側で処理）
+    if (typeof getEditingNotebookBase === 'function') {
+        const base = getEditingNotebookBase(id);
+        const own = (_pushedEditedAt.get(id) || new Set()).has(remoteTime);
+        if (base !== null && !own && remoteTime > base) {
+            if (row.deleted) {
+                await handleRemoteEditConflict(id, { deleted: true, editedAt: remoteTime });
+            } else {
+                const content = await _resolveNoteContent(row.content);
+                const remoteNote = sanitizeNote({ id, title: row.title, content: '', category: row.category, status: row.status, linkedNoteIds: row.linked_note_ids, createdAt: row.created_at, updatedAt: remoteTime });
+                if (remoteNote) { remoteNote.content = content; await handleRemoteEditConflict(id, remoteNote); }
+            }
+            pendingNotebookIds.add(id);
+            return false;
+        }
+    }
 
     if (remoteTime < localTime()) { pendingNotebookIds.add(id); return false; }
     if (remoteTime === localTime()) {
@@ -602,9 +651,24 @@ async function mergeRemoteSettingsRow(row) {
     return true;
 }
 
+// 自分が送信したノートの edited_at（リアルタイムで戻ってくるエコーを「他端末の更新」と誤認しないため）
+const _pushedEditedAt = new Map();
+function _rememberPushed(id, editedAt) {
+    let set = _pushedEditedAt.get(id);
+    if (!set) { set = new Set(); _pushedEditedAt.set(id, set); }
+    set.add(editedAt);
+    if (set.size > 50) set.delete(set.values().next().value);
+}
+
 // ==========================================
 // 7. 送信（read-merge-write）
 // ==========================================
+function _normIso(v) {
+    if (!v) return '';
+    const t = Date.parse(v);
+    return isNaN(t) ? '' : new Date(t).toISOString();
+}
+
 function _chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
 
 async function _pushAll() {
@@ -731,6 +795,7 @@ async function _pushNotebooks(ids) {
             }
         }
         if (!payload.length) continue;
+        payload.forEach(p => _rememberPushed(p.id, p.edited_at));
         const { error } = await supabaseClient.from('notebooks').upsert(payload);
         if (error) throw error;
         for (const p of payload) {

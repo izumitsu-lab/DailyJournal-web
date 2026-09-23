@@ -5,6 +5,43 @@
 let notebookSearchQuery = "";
 let currentActiveEditorNotebookId = null;
 let notebookEditorOriginalBackup = null; // 編集前のバックアップ用（キャンセル時に完全復旧）
+const freshNotebookIds = new Set(); // ＋ボタンで作成し、まだ一度も保存確定していないノート
+const notebookEditConflicts = new Map(); // 編集中に他端末で削除されたノート（id -> {deleted, editedAt}）
+const _conflictCopiedKeys = new Set();
+
+// 同期モジュールから呼ばれる：このノートを編集中なら、編集開始時点の更新時刻を返す（編集中でなければ null）
+function getEditingNotebookBase(id) {
+    if (currentActiveEditorNotebookId !== id || !notebookEditorOriginalBackup || notebookEditorOriginalBackup.id !== id) return null;
+    return notebookEditorOriginalBackup.baseUpdatedAt || '';
+}
+
+// 編集中に他端末で同じノートが更新・削除されたとき
+// - 更新：画面の編集内容は守りつつ、相手の版を「（他の端末の版）」として別ノートに保存（どちらも失わない）
+// - 削除：保存すれば編集内容で復元、キャンセルすれば削除を受け入れる
+async function handleRemoteEditConflict(id, remote) {
+    if (remote.deleted) {
+        notebookEditConflicts.set(id, remote);
+        showToast('編集中のノートが他の端末で削除されました。「保存」すると編集内容で復元され、「キャンセル」すると削除されます。');
+        return;
+    }
+    const key = id + '@' + remote.updatedAt;
+    if (_conflictCopiedKeys.has(key)) return;
+    _conflictCopiedKeys.add(key);
+    const now = new Date().toISOString();
+    const copy = {
+        id: generateId('nb_'),
+        title: `${remote.title || '無題のノート'}（他の端末の版）`,
+        content: remote.content || '',
+        category: remote.category || 'ライフログ',
+        status: remote.status === 'trash' ? 'archive' : (remote.status || 'active'),
+        linkedNoteIds: [],
+        createdAt: now,
+        updatedAt: now
+    };
+    notebookData.push(copy);
+    await saveNotebookData();
+    showToast(`編集中に、このノートが他の端末で更新されました。相手の版は「${copy.title}」として別ノートに保存しました。`);
+}
 
 // Undo / Redo 履歴管理（直近10件まで保持）
 let editorHistoryStack = [];
@@ -310,6 +347,7 @@ function openNotebookLinked(id) {
         const cardSlide = scroller ? scroller.querySelector(`[data-id="${id}"]`) : null;
         
         if (cardSlide && scroller) {
+            ensureCardContentRendered(scroller, Number(cardSlide.dataset.index) || 0);
             scroller.scrollTo({ left: cardSlide.offsetLeft, behavior: 'auto' });
             const targetNote = notebookData.find(n => n.id === id);
             if (targetNote) {
@@ -1127,6 +1165,19 @@ function buildNotebookToolbarHtml(n) {
     `;
 }
 
+// カードビューは全ノートの枠だけ作り、本文は表示中のカードの前後だけ描画する（ノート数が多くても軽くするため）
+const CARD_RENDER_RADIUS = 2;
+function ensureCardContentRendered(scroller, index) {
+    if (!scroller) return;
+    const slides = scroller.children;
+    for (let i = Math.max(0, index - CARD_RENDER_RADIUS); i <= Math.min(slides.length - 1, index + CARD_RENDER_RADIUS); i++) {
+        const ph = slides[i].querySelector('.nb-lazy-content[data-lazy-id]');
+        if (!ph) continue;
+        const note = notebookData.find(n => n.id === ph.dataset.lazyId);
+        if (note) ph.outerHTML = buildNotebookContentHtml(note); else ph.remove();
+    }
+}
+
 function renderCardViewMode(container, filteredNotebooks, filterBadgeHtml) {
     if (currentNotebookIndex >= filteredNotebooks.length || currentNotebookIndex < 0) {
         currentNotebookIndex = 0;
@@ -1191,7 +1242,7 @@ function renderCardViewMode(container, filteredNotebooks, filterBadgeHtml) {
                 ${buildNotebookToolbarHtml(n)}
 
                 <div class="logs-container-wrapper" id="nb_logs_wrapper_${n.id}" style="padding: 4px 2px;" ondblclick="handleNotebookContainerDblClick(event, '${n.id}')">
-                    ${buildNotebookContentHtml(n)}
+                    ${Math.abs(idx - currentNotebookIndex) <= CARD_RENDER_RADIUS ? buildNotebookContentHtml(n) : `<div class="nb-lazy-content" data-lazy-id="${n.id}"></div>`}
                 </div>
             </div>
         `;
@@ -1231,6 +1282,7 @@ function setupConnectedSwipeListener(scroller, filteredNotebooks) {
             if (!w) return;
             const newIndex = Math.round(scroller.scrollLeft / w);
             if (newIndex >= 0 && newIndex < filteredNotebooks.length) {
+                ensureCardContentRendered(scroller, newIndex);
                 if (currentNotebookIndex !== newIndex) {
                     currentNotebookIndex = newIndex;
                     const cNote = filteredNotebooks[currentNotebookIndex];
@@ -2814,7 +2866,7 @@ function breakOutOfSpecialBlock(blockNode, id) {
 
 function handleNotebookKeyDown(e, id) {
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    const isCtrl = isMac ? event.metaKey : event.ctrlKey;
+    const isCtrl = isMac ? e.metaKey : e.ctrlKey;
 
     if (isCtrl && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
@@ -3244,6 +3296,9 @@ function handleNotebookContentDblClick(event, id) {
 
 function enableNotebookEdit(id, focusTarget = 'content') {
     currentActiveEditorNotebookId = id;
+    const _scroller = document.getElementById('connectedCenterScroller');
+    const _slide = _scroller ? _scroller.querySelector(`[data-id="${id}"]`) : null;
+    if (_slide) ensureCardContentRendered(_scroller, Number(_slide.dataset.index) || 0);
 
     const note = notebookData.find(n => n.id === id);
     if (note) {
@@ -3251,7 +3306,9 @@ function enableNotebookEdit(id, focusTarget = 'content') {
             id: note.id,
             title: note.title || '',
             content: note.content || '',
-            isNew: (!note.title && !note.content)
+            // 「新規」は＋ボタンで作った直後のノートだけ（既存の空ノートをキャンセルで消さない）
+            isNew: freshNotebookIds.has(note.id),
+            baseUpdatedAt: note.updatedAt || ''
         };
 
         clearTimeout(historyDebounceTimer);
@@ -3314,6 +3371,8 @@ async function saveNotebookEdit(id) {
             notebookData[idx].content = contentArea.innerHTML;
         }
         notebookData[idx].updatedAt = new Date().toISOString();
+        freshNotebookIds.delete(id);
+        notebookEditConflicts.delete(id);
         
         await saveNotebookData();
         
@@ -3344,8 +3403,26 @@ async function cancelNotebookEdit(id) {
     const backup = notebookEditorOriginalBackup;
     const idx = notebookData.findIndex(n => n.id === id);
 
+    // 編集中に他端末で削除されていた場合、キャンセル＝削除を受け入れる
+    const conflict = notebookEditConflicts.get(id);
+    notebookEditConflicts.delete(id);
+    if (conflict && conflict.deleted && idx !== -1) {
+        notebookData.splice(idx, 1);
+        notebookData.forEach(o => { if (Array.isArray(o.linkedNoteIds) && o.linkedNoteIds.includes(id)) o.linkedNoteIds = o.linkedNoteIds.filter(x => x !== id); });
+        notebookTombstones[id] = conflict.editedAt;
+        rebaselineNotebooks(notebookData.map(n => n.id).concat([id]));
+        await persistNotebooks();
+        notebookEditorOriginalBackup = null;
+        currentActiveEditorNotebookId = null;
+        currentNotebookIndex = Math.max(0, Math.min(currentNotebookIndex, getFilteredNotebooks().length - 1));
+        renderRightCards();
+        if (sidebarMode === 'cal') renderNotebookSidebar();
+        return;
+    }
+
     if (idx !== -1) {
         if (backup.isNew) {
+            freshNotebookIds.delete(id);
             notebookData.splice(idx, 1);
             await saveNotebookData();
             currentNotebookIndex = Math.max(0, currentNotebookIndex - 1);
@@ -3390,6 +3467,7 @@ async function openAddNotebookModal() {
     }
 
     const newId = 'nb_' + Date.now().toString() + Math.floor(Math.random() * 1000);
+    freshNotebookIds.add(newId);
 
     notebookData.unshift({
         id: newId,

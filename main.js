@@ -150,27 +150,84 @@ async function deleteDBData(key) {
 // ==========================================
 // 画像ストア（ハッシュ ⇔ Base64）
 // ==========================================
-const _hashByData = new Map();   // dataURL -> sha256
-const _dataByHash = new Map();   // sha256  -> dataURL
-const _storedImageHashes = new Set(); // IndexedDB の images ストアに保存済みのハッシュ
+// v3: ジャーナルの画像は起動時にメモリへ読み込まない。
+//     メモリ上の記録は "idbimg:<hash>" 参照のまま持ち、画面に表示されるときだけ画像ストアから読む（LRUキャッシュ付き）。
+//     ※ノート本文の画像は編集機能の都合上、従来どおり読み込んだ状態で保持する。
+const _hashByData = new Map();   // dataURL -> sha256（ノート本文の画像と、保存前の新しい画像だけを保持）
+const _storedImageHashes = new Set();  // images ストアに保存済みのハッシュ
+const _sessionStoredHashes = new Set(); // この起動中に保存した画像（掃除処理で消さないため）
 
 function isDataImage(s) { return typeof s === 'string' && s.startsWith('data:image/'); }
 function isValidDataImage(s) { return typeof s === 'string' && DATA_URI_FULL_RE.test(s); }
+function idbRefHash(s) { return (typeof s === 'string' && s.startsWith(IDB_IMG_PREFIX)) ? s.slice(IDB_IMG_PREFIX.length) : null; }
 
 async function sha256Hex(str) {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// 画像キャッシュ（ハッシュ -> dataURL、合計サイズで上限を設けるLRU）
+const IMG_CACHE_BUDGET = 48 * 1024 * 1024; // 文字数（≒バイト数）
+const _imgCache = new Map();
+let _imgCacheSize = 0;
+function _cachePut(h, d) {
+    if (_imgCache.has(h)) { _imgCacheSize -= _imgCache.get(h).length; _imgCache.delete(h); }
+    _imgCache.set(h, d); _imgCacheSize += d.length;
+    while (_imgCacheSize > IMG_CACHE_BUDGET && _imgCache.size > 1) {
+        const [k, v] = _imgCache.entries().next().value;
+        _imgCache.delete(k); _imgCacheSize -= v.length;
+    }
+}
+function _cacheGet(h) {
+    const d = _imgCache.get(h);
+    if (d !== undefined) { _imgCache.delete(h); _imgCache.set(h, d); }
+    return d;
+}
+
+// ノート本文の画像など、メモリ上で dataURL のまま扱う画像のハッシュを登録
 function registerImage(hash, dataUrl) {
     _hashByData.set(dataUrl, hash);
-    _dataByHash.set(hash, dataUrl);
+    _cachePut(hash, dataUrl);
 }
-function getImageByHash(hash) { return _dataByHash.get(hash) || null; }
+function hasStoredImage(hash) { return _storedImageHashes.has(hash); }
+
+const _imgLoading = new Map();
+async function getImageData(hash) {
+    const c = _cacheGet(hash);
+    if (c !== undefined) return c;
+    if (_imgLoading.has(hash)) return _imgLoading.get(hash);
+    const p = (async () => {
+        const db = await initDB();
+        const d = await new Promise((res, rej) => { const r = db.transaction(IMG_STORE, 'readonly').objectStore(IMG_STORE).get(hash); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+        if (typeof d === 'string') _cachePut(hash, d);
+        return typeof d === 'string' ? d : null;
+    })();
+    _imgLoading.set(hash, p);
+    try { return await p; } finally { _imgLoading.delete(hash); }
+}
+
+async function storeImage(hash, dataUrl) {
+    if (!_storedImageHashes.has(hash)) {
+        const db = await initDB();
+        const tx = db.transaction(IMG_STORE, 'readwrite');
+        tx.objectStore(IMG_STORE).put(dataUrl, hash);
+        await _txDone(tx);
+        _storedImageHashes.add(hash);
+    }
+    _sessionStoredHashes.add(hash);
+    _cachePut(hash, dataUrl);
+}
+
+// "idbimg:" 参照 / dataURL → dataURL（書き出し・アップロード用）
+async function resolveImageRef(ref) {
+    const h = idbRefHash(ref);
+    if (h) return await getImageData(h);
+    return ref;
+}
 
 async function hashImage(dataUrl) {
     let h = _hashByData.get(dataUrl);
-    if (!h) { h = await sha256Hex(dataUrl); registerImage(h, dataUrl); }
+    if (!h) { h = await sha256Hex(dataUrl); _hashByData.set(dataUrl, h); }
     return h;
 }
 async function ensureImageHashes(list) {
@@ -274,7 +331,7 @@ function sanitizeTombstoneMap(m) {
 
 function sanitizeNote(raw) {
     if (!raw || typeof raw !== 'object' || !isSafeId(raw.id)) return null;
-    const iso = (v) => (typeof v === 'string' && !isNaN(Date.parse(v))) ? v : null;
+    const iso = (v) => (typeof v === 'string' && !isNaN(Date.parse(v))) ? new Date(Date.parse(v)).toISOString() : null;
     const status = ['active', 'permanent', 'archive', 'trash'].includes(raw.status) ? raw.status : 'archive';
     let content = typeof raw.content === 'string' ? raw.content : '';
     if (typeof sanitizeNoteHtml === 'function') content = sanitizeNoteHtml(content);
@@ -430,19 +487,33 @@ function _toIdbRef(s, newImgs) {
 }
 
 async function persistJournal() {
-    const all = [];
-    for (const d of Object.keys(journalData)) for (const log of journalData[d]) all.push(..._logImages(log));
-    await ensureImageHashes(all);
+    const fresh = [];
+    for (const d of Object.keys(journalData)) for (const log of journalData[d]) for (const img of _logImages(log)) if (isDataImage(img)) fresh.push(img);
+    await ensureImageHashes(fresh);
 
+    // ここから同期的に処理：新しい画像を参照に置き換え、メモリ上からも Base64 を手放す
     const newImgs = new Map();
+    const converted = [];
     const stored = {};
     for (const d of Object.keys(journalData)) {
-        stored[d] = journalData[d].map(log => {
-            const c = Object.assign({}, log);
-            c.images = _logImages(log).map(s => _toIdbRef(s, newImgs));
-            delete c.image;
-            return c;
-        });
+        for (const log of journalData[d]) {
+            if (log.image) { log.images = _logImages(log); delete log.image; }
+            if (!Array.isArray(log.images)) log.images = [];
+            if (log.images.some(isDataImage)) {
+                // 画像の表現が変わるだけなので、ほかに未検知の変更がなければ「変更なし」の基準も更新する
+                const baselineOk = _journalFp.get(log.id) === journalLogFp(d, log);
+                log.images = log.images.map(s => {
+                    if (!isDataImage(s)) return s;
+                    const h = _hashByData.get(s);
+                    if (!h) return s;
+                    if (!_storedImageHashes.has(h)) newImgs.set(h, s);
+                    converted.push(s);
+                    return IDB_IMG_PREFIX + h;
+                });
+                if (baselineOk) _journalFp.set(log.id, journalLogFp(d, log));
+            }
+        }
+        stored[d] = journalData[d].map(log => Object.assign({}, log, { images: log.images.slice() }));
     }
     const db = await initDB();
     const tx = db.transaction([STORE_NAME, IMG_STORE], 'readwrite');
@@ -451,7 +522,8 @@ async function persistJournal() {
     tx.objectStore(STORE_NAME).put(stored, 'journalData');
     tx.objectStore(STORE_NAME).put(journalTombstones, 'journalTombstones');
     await _txDone(tx);
-    for (const h of newImgs.keys()) _storedImageHashes.add(h);
+    for (const [h, data] of newImgs) { _storedImageHashes.add(h); _sessionStoredHashes.add(h); _cachePut(h, data); }
+    for (const s of converted) _hashByData.delete(s);
 }
 
 let _nbPersistCache = new Map();
@@ -484,7 +556,7 @@ async function persistNotebooks() {
     tx.objectStore(STORE_NAME).put(stored, 'notebookData');
     tx.objectStore(STORE_NAME).put(notebookTombstones, 'notebookTombstones');
     await _txDone(tx);
-    for (const h of newImgs.keys()) _storedImageHashes.add(h);
+    for (const h of newImgs.keys()) { _storedImageHashes.add(h); _sessionStoredHashes.add(h); }
 }
 
 // アプリ側（ui.js / notebooks.js）から呼ばれる保存関数。
@@ -500,37 +572,46 @@ async function saveNotebookData() {
     _notifyLocalChange('notebook', changed);
 }
 
-// 起動時の読み込み：images ストアから画像を戻す
+// 起動時の読み込み：images ストアは「どの画像があるか」だけ読む（画像本体は表示時に読む）
 async function loadImageStore() {
     const db = await initDB();
-    const tx = db.transaction(IMG_STORE, 'readonly');
-    const store = tx.objectStore(IMG_STORE);
-    const [keys, vals] = await Promise.all([
-        new Promise((res, rej) => { const r = store.getAllKeys(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }),
-        new Promise((res, rej) => { const r = store.getAll(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); })
-    ]);
-    keys.forEach((h, i) => {
-        if (typeof vals[i] === 'string') { registerImage(h, vals[i]); _storedImageHashes.add(h); }
-    });
+    const keys = await new Promise((res, rej) => { const r = db.transaction(IMG_STORE, 'readonly').objectStore(IMG_STORE).getAllKeys(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    keys.forEach(h => _storedImageHashes.add(h));
 }
 
-function _resolveIdbRef(s) {
-    if (typeof s === 'string' && s.startsWith(IDB_IMG_PREFIX)) {
-        return _dataByHash.get(s.slice(IDB_IMG_PREFIX.length)) || s;
+// ノート本文中の "idbimg:" 参照を dataURL に戻す（ノートは編集の都合上、画像を読み込んだ状態で持つ）
+async function hydrateNotes(notes) {
+    const hashes = new Set();
+    for (const n of notes) { if (n.content && n.content.indexOf(IDB_IMG_PREFIX) !== -1) { let m; const re = new RegExp(IDB_REF_RE.source, 'g'); while ((m = re.exec(n.content))) hashes.add(m[1]); } }
+    const map = new Map();
+    for (const h of hashes) { const d = await getImageData(h); if (d) { map.set(h, d); _hashByData.set(d, h); } }
+    for (const n of notes) {
+        if (n.content && n.content.indexOf(IDB_IMG_PREFIX) !== -1) n.content = n.content.replace(IDB_REF_RE, (m, h) => map.get(h) || m);
     }
-    return s;
 }
-function hydrateJournalImages(data) {
-    for (const d of Object.keys(data)) for (const log of data[d]) {
-        log.images = _logImages(log).map(_resolveIdbRef);
-        delete log.image;
-    }
+
+// 旧形式（ジャーナルに Base64 が直接入っている）データ用：画像はそのまま持ち、次の保存で画像ストアへ移す
+function normalizeJournalImages(data) {
+    for (const d of Object.keys(data)) for (const log of data[d]) { log.images = _logImages(log); delete log.image; }
     return data;
 }
-function hydrateNoteContent(content) {
-    if (!content || content.indexOf(IDB_IMG_PREFIX) === -1) return content;
-    return content.replace(IDB_REF_RE, (m, h) => _dataByHash.get(h) || m);
+
+// 書き出し用：画像を dataURL に戻したジャーナルのコピー
+async function resolveLogsForExport(logs) {
+    const out = [];
+    for (const log of (logs || [])) {
+        const images = [];
+        for (const img of _logImages(log)) { const d = await resolveImageRef(img); if (d) images.push(d); }
+        out.push(Object.assign({}, log, { images }));
+    }
+    return out;
 }
+async function getJournalDataForExport() {
+    const out = {};
+    for (const d of Object.keys(journalData).sort()) out[d] = await resolveLogsForExport(journalData[d]);
+    return out;
+}
+async function getNotebookDataForExport() { return notebookData; }
 
 // どこからも参照されなくなった画像を images ストアから掃除する（保存済みレコードを基準に同一トランザクション内で判定）
 async function garbageCollectImages() {
@@ -544,8 +625,9 @@ async function garbageCollectImages() {
             get(app, 'journalData'), get(app, 'notebookData'),
             new Promise((res, rej) => { const r = imgs.getAllKeys(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); })
         ]);
-        const text = JSON.stringify(j || {}) + JSON.stringify(n || []);
-        const used = new Set();
+        // 保存済みレコード＋メモリ上のデータ＋この起動中に保存した画像は消さない（保存途中の画像を守る）
+        const text = JSON.stringify(j || {}) + JSON.stringify(n || []) + JSON.stringify(journalData) + JSON.stringify(notebookTombstones);
+        const used = new Set(_sessionStoredHashes);
         let m; const re = new RegExp(IDB_REF_RE.source, 'g');
         while ((m = re.exec(text))) used.add(m[1]);
         for (const h of keys) if (!used.has(h)) { imgs.delete(h); _storedImageHashes.delete(h); }
@@ -741,15 +823,8 @@ async function _syncAndMigrateCategoriesInner() {
         typesUpdated = true;
     }
 
-    if (!appTypes.includes("ログ")) {
-        appTypes.unshift("ログ");
-        typesUpdated = true;
-    }
-    if (!appTypes.includes("研究管理")) {
-        const logIdx = appTypes.indexOf("ログ");
-        appTypes.splice(logIdx + 1, 0, "研究管理");
-        typesUpdated = true;
-    }
+    // ※以前は「ログ」「研究管理」を毎回強制的に追加していたため、削除しても起動のたびに復活していた。
+    //   既定タイプはタイプが1つもない（初回起動）ときだけ入れる。
 
     let catUpdated = false;
     categories.forEach(c => {
@@ -763,6 +838,7 @@ async function _syncAndMigrateCategoriesInner() {
                 typesUpdated = true;
             } else {
                 c.type = "一般";
+                if (!appTypes.includes("一般")) { appTypes.push("一般"); typesUpdated = true; }
                 catUpdated = true;
             }
         }
@@ -942,9 +1018,9 @@ window.onload = async () => {
     // 旧形式（記録IDなし）なら、ID付与後に保存し直す
     const hadLogsWithoutId = Object.values(loadedJournal || {}).some(arr => Array.isArray(arr) && arr.some(l => l && !l.id));
 
-    journalData = hydrateJournalImages(sanitizeJournalData(loadedJournal));
+    journalData = normalizeJournalImages(sanitizeJournalData(loadedJournal));
     notebookData = (Array.isArray(loadedNotebook) ? loadedNotebook : []).map(sanitizeNote).filter(Boolean);
-    notebookData.forEach(n => { n.content = hydrateNoteContent(n.content); });
+    await hydrateNotes(notebookData);
 
     const jt = await getDBData('journalTombstones');
     journalTombstones = {};

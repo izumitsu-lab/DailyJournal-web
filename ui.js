@@ -174,12 +174,68 @@ function renderPhotoPreviews(m) {
     c.classList.add('has-photos');
     p.forEach((d, i) => {
         const div = document.createElement('div'); div.className = 'photo-preview-item';
-        div.innerHTML = `<img src="${d}"><button class="photo-preview-del-btn" onclick="removePhotoAtIndex('${m}', ${i})">✕</button>`;
+        div.innerHTML = `<img ${imgSrcAttrs(d)}><button class="photo-preview-del-btn" onclick="removePhotoAtIndex('${m}', ${i})">✕</button>`;
         c.appendChild(div);
     });
 }
 function removePhotoAtIndex(m, i) { if (m === 'add') currentAddPhotos.splice(i, 1); else currentEditPhotos.splice(i, 1); renderPhotoPreviews(m); }
+// 画面下部に一時的なお知らせを出す（alert と違い、作業を止めない）
+function showToast(message, ms = 7000) {
+    let box = document.getElementById('appToastBox');
+    if (!box) { box = document.createElement('div'); box.id = 'appToastBox'; box.className = 'app-toast-box'; document.body.appendChild(box); }
+    const t = document.createElement('div');
+    t.className = 'app-toast';
+    t.setAttribute('role', 'status');
+    t.textContent = message;
+    t.onclick = () => t.remove();
+    box.appendChild(t);
+    setTimeout(() => t.remove(), ms);
+}
+
 function openLightbox(s) { document.getElementById('lightboxImg').src = s; document.getElementById('lightboxModal').classList.add('active'); }
+
+// ==========================================
+// ジャーナル画像の遅延読み込み
+// ==========================================
+// 記録の画像はメモリ上では "idbimg:<hash>" 参照。描画時は透明画像を置き、画面に近づいたら画像ストアから読み込む。
+const IMG_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+function imgSrcAttrs(ref) {
+    const h = idbRefHash(ref);
+    if (h) return `src="${IMG_PLACEHOLDER}" data-idbimg="${h}"`;
+    return `src="${ref}"`;
+}
+async function openLightboxFromImg(img) {
+    if (!img) return;
+    const h = img.dataset ? img.dataset.idbimg : null;
+    const src = h ? await getImageData(h) : img.src;
+    if (src) openLightbox(src);
+}
+async function _loadIdbImage(img) {
+    const h = img.dataset.idbimg;
+    if (!h || img.dataset.idbLoaded === h) return;
+    img.dataset.idbLoaded = h;
+    const d = await getImageData(h);
+    if (img.dataset.idbimg !== h) return;
+    if (d) img.src = d; else img.classList.add('img-missing');
+}
+const _idbImgObserver = ('IntersectionObserver' in window)
+    ? new IntersectionObserver(entries => {
+        entries.forEach(e => { if (e.isIntersecting) { _idbImgObserver.unobserve(e.target); _loadIdbImage(e.target); } });
+    }, { rootMargin: '800px' })
+    : null;
+function watchIdbImages(root) {
+    if (!root || !root.querySelectorAll) return;
+    const list = root.matches && root.matches('img[data-idbimg]') ? [root] : [];
+    root.querySelectorAll('img[data-idbimg]').forEach(i => list.push(i));
+    list.forEach(img => {
+        if (img.dataset.idbWatched === img.dataset.idbimg) return;
+        img.dataset.idbWatched = img.dataset.idbimg;
+        if (_idbImgObserver) _idbImgObserver.observe(img); else _loadIdbImage(img);
+    });
+}
+new MutationObserver(muts => {
+    for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) watchIdbImages(n);
+}).observe(document.documentElement, { childList: true, subtree: true });
 function closeLightbox() { document.getElementById('lightboxModal').classList.remove('active'); document.getElementById('lightboxImg').src = ""; }
 
 function getLogCategoryType(catName) { const f = categories.find(c => c.name === catName); return f ? (f.type || "一般") : "一般"; }
@@ -734,7 +790,7 @@ function createLogItemHtml(log, dateStr, originalIndex) {
     else if (sType === 'outgoing') sBadge = `<span class="slack-direction-badge outgoing"><span>📤</span><span>自分から</span></span>`;
 
     const p = Array.isArray(log.images) ? log.images : (log.image ? [log.image] : []);
-    const pHtml = p.length > 0 ? `<div class="log-photos-grid">` + p.map(img => `<div class="log-photo-thumb-wrap" onclick="event.stopPropagation(); openLightbox(this.querySelector('img').src)"><img class="log-photo-thumb" src="${img}" loading="lazy"></div>`).join('') + `</div>` : "";
+    const pHtml = p.length > 0 ? `<div class="log-photos-grid">` + p.map(img => `<div class="log-photo-thumb-wrap" onclick="event.stopPropagation(); openLightboxFromImg(this.querySelector('img'))"><img class="log-photo-thumb" ${imgSrcAttrs(img)} loading="lazy"></div>`).join('') + `</div>` : "";
 
     let cHtml = "";
     if (sType === 'incoming') cHtml = `<div class="chat-bubble-card incoming"><div class="chat-bubble-header"><span>💬</span><span>${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
@@ -913,7 +969,7 @@ function renderPhotoJournalCarousel() {
         const sType = showSlack ? (log.slackType || (log.isSlack ? 'incoming' : null)) : null;
 
         let sb = ""; if (sType === 'incoming') sb = `<span class="slack-direction-badge incoming"><span>📥</span><span>相手から</span></span>`; else if (sType === 'outgoing') sb = `<span class="slack-direction-badge outgoing"><span>📤</span><span>自分から</span></span>`;
-        let sHtml = ""; photos.forEach(u => sHtml += `<div class="photo-stage-slide"><img class="photo-stage-full-img" src="${u}" onclick="openLightbox(this.src)" loading="lazy"></div>`);
+        let sHtml = ""; photos.forEach(u => sHtml += `<div class="photo-stage-slide"><img class="photo-stage-full-img" ${imgSrcAttrs(u)} onclick="openLightboxFromImg(this)" loading="lazy"></div>`);
         const cp = photos.length > 1 ? `<div class="photo-count-pill">📷 1 / ${photos.length}</div>` : '';
         
         let mb = "";
@@ -1028,7 +1084,7 @@ function renderMonthCarousel() {
     if (hideEmptyCards) {
         const wL = eM.filter(em => em.mLc > 0);
         if (wL.length > 0) { mToR = [...wL]; const f = eM.find(em => em.isF); if (f && !mToR.some(em => em.mO.pre === f.mO.pre)) { mToR.push(f); mToR.sort((a, b) => a.mO.pre.localeCompare(b.mO.pre)); } }
-        else { const fb = eM.find(ew => ew.isF) || eM[eM.length - 1]; wToR = [fb]; }
+        else { const fb = eM.find(em => em.isF) || eM[eM.length - 1]; mToR = [fb]; }
     }
 
     mToR.forEach(em => {
@@ -1802,7 +1858,7 @@ function generateDayHtmlDocument(dStr, logs) {
     return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${fd} - Daily Journal</title><style>:root { color-scheme: light dark; --bg: #08080a; --card-bg: #121215; --item-bg: #1a1a1f; --border: rgba(255, 255, 255, 0.08); --text-primary: #ffffff; --text-secondary: #98989f; --accent: #2997ff; --accent-soft: rgba(41, 151, 255, 0.15); } @media (prefers-color-scheme: light) { :root { --bg: #f2f2f7; --card-bg: #ffffff; --item-bg: #f8f8fa; --border: rgba(0, 0, 0, 0.08); --text-primary: #1c1c1e; --text-secondary: #8e8e93; --accent: #007aff; --accent-soft: rgba(0, 122, 255, 0.12); } } * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; } body { background-color: var(--bg); color: var(--text-primary); padding: 30px 16px; display: flex; justify-content: center; } .container { width: 100%; max-width: 640px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 24px; padding: 28px; } header { margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px; } .eyebrow { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; } h1 { font-size: 24px; font-weight: 700; margin-top: 4px; } .log-list { display: flex; flex-direction: column; gap: 14px; } .log-item { background: var(--item-bg); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; } .time { font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 8px; } .cat { font-size: 11px; font-weight: 700; background: rgba(128,128,128,0.2); padding: 2px 8px; border-radius: 8px; } .content { font-size: 16px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; } .journal-link { color: var(--accent); text-decoration: none; font-weight: 600; padding: 1px 6px; margin: 0 2px; background: var(--accent-soft); border-radius: 6px; display: inline-flex; align-items: center; gap: 3px; word-break: break-all; }</style></head><body><div class="container"><header><div class="eyebrow">${dStr}</div><h1>${fd}</h1></header><div class="log-list">${h}</div></div></body></html>`;
 }
 
-function exportArchiveHtml() {
+async function exportArchiveHtml() {
     const journalDates = Object.keys(journalData).filter(d => Array.isArray(journalData[d]) && journalData[d].length > 0).sort().reverse();
     const validNotebooks = notebookData.filter(n => n.status !== 'trash');
 
@@ -1817,8 +1873,9 @@ function exportArchiveHtml() {
     const createdDateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const fileDateSuffix = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
 
+    const exportJournal = await getJournalDataForExport();
     const rawPayload = JSON.stringify({
-        journalData: journalData,
+        journalData: exportJournal,
         notebookData: validNotebooks,
         categories: categories,
         appTypes: appTypes
@@ -2231,7 +2288,7 @@ async function executeBatchHtmlExport() {
                 for (const d of journalDates) {
                     const fh = await targetDir.getFileHandle(d.replace(/-/g, '') + '.html', { create: true });
                     const w = await fh.createWritable();
-                    await w.write(generateDayHtmlDocument(d, journalData[d]));
+                    await w.write(generateDayHtmlDocument(d, await resolveLogsForExport(journalData[d])));
                     await w.close();
                     journalCount++;
                 }
@@ -2268,10 +2325,10 @@ async function executeBatchHtmlExport() {
 
             if (opt === 'journals' || opt === 'both') {
                 const targetFolder = (opt === 'both') ? zip.folder('journal') : zip;
-                journalDates.forEach(d => {
-                    targetFolder.file(d.replace(/-/g, '') + '.html', generateDayHtmlDocument(d, journalData[d]));
+                for (const d of journalDates) {
+                    targetFolder.file(d.replace(/-/g, '') + '.html', generateDayHtmlDocument(d, await resolveLogsForExport(journalData[d])));
                     journalCount++;
-                });
+                }
             }
 
             if (opt === 'notebooks' || opt === 'both') {
@@ -2309,11 +2366,20 @@ async function executeBatchHtmlExport() {
     }
 }
 
-function exportData() {
-    const p = { appTypes, categories, typeSlackSettings, typeNotebookSettings, hideEmptyCards, deviceDisplayMode, journalData, notebookData };
-    const a = document.createElement('a'); a.setAttribute("href", "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(p, null, 2)));
-    const n = new Date(); a.setAttribute("download", `journal_backup_${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}.json`);
-    document.body.appendChild(a); a.click(); a.remove();
+// data: URI はサイズ上限があり、写真が多いと書き出しに失敗するため Blob で書き出す
+async function exportData() {
+    try {
+        const p = { appTypes, categories, typeSlackSettings, typeNotebookSettings, hideEmptyCards, deviceDisplayMode, journalData: await getJournalDataForExport(), notebookData: await getNotebookDataForExport() };
+        const blob = new Blob([JSON.stringify(p)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        const n = new Date(); a.download = `journal_backup_${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+        console.error(e);
+        alert("バックアップの書き出しに失敗しました: " + (e && e.message ? e.message : e));
+    }
 }
 
 function triggerImport() { document.getElementById('importFile').click(); }

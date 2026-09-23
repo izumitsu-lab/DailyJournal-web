@@ -1735,3 +1735,11 @@ body.is-mobile-mode .notebook-grid-card { aspect-ratio: auto; min-height: 170px;
 .sidebar-reopen-btn.visible { display: flex; }
 body.is-mobile-mode .sidebar-reopen-btn { display: none !important; }
 body.readonly-mode .sidebar-reopen-btn { display: none !important; }
+
+/* =========================================================
+   お知らせ（トースト）・画像読み込み
+   ========================================================= */
+.app-toast-box { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom, 0px)); z-index: 3000; display: flex; flex-direction: column; gap: 8px; width: min(92vw, 520px); pointer-events: none; }
+.app-toast { pointer-events: auto; background: var(--card-bg); color: var(--text-primary); border: 1px solid var(--card-border); border-left: 4px solid #e67e22; border-radius: 12px; padding: 11px 14px; font-size: 13px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); cursor: pointer; animation: sidebarFadeIn 0.2s ease; }
+img[data-idbimg] { background: rgba(128, 128, 128, 0.12); }
+img.img-missing { opacity: 0.35; }
