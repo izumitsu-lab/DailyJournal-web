@@ -197,8 +197,7 @@ function initSupabase(url, key) {
     }
 }
 
-async function saveSupabaseConfig() {
-    await _commitPendingInput();
+function saveSupabaseConfig() {
     const url = document.getElementById('supabaseUrlInput').value.trim();
     const key = document.getElementById('supabaseKeyInput').value.trim();
     if (!url || !key) return alert("URLとAnon Keyを入力してください。");
@@ -225,18 +224,12 @@ function setupNetworkAndLifecycleListeners() {
     });
 
     // アプリ復帰時：未送信分を送ってから、差分を取得する
-    // アプリに戻ってきたとき：
-    // ・まだ未ログインの表示なら、ログイン状態を確認し直す（元の版にあった動作。iPhoneでログイン直後に反映されない場合の救済）
-    // ・ログイン済みなら、未送信分の送信 → 差分取得
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState !== 'visible' || !supabaseClient) return;
-        if (!supabaseUser) { checkSupabaseAuth(); return; }
-        if (navigator.onLine) {
+        if (document.visibilityState === 'visible' && supabaseClient && supabaseUser && navigator.onLine) {
             syncNow(false);
             ensureRealtimeSubscribed();
         }
     });
-    window.addEventListener('pageshow', (e) => { if (e.persisted && supabaseClient && !supabaseUser) checkSupabaseAuth(); });
 
     // 保険：送れていないデータがあれば定期的に再送
     clearInterval(retryLoopTimer);
@@ -303,7 +296,6 @@ async function checkSupabaseAuth() {
 
 async function signUpSupabase() {
     if (!supabaseClient) return alert("接続設定を先に行ってください。");
-    await _commitPendingInput();
     const email = document.getElementById('supabaseEmail').value.trim();
     const password = document.getElementById('supabasePassword').value;
     if (!email || !password) return alert("メールアドレスとパスワードを入力してください。");
@@ -317,17 +309,8 @@ async function signUpSupabase() {
     }
 }
 
-// iPhoneでは、自動入力や日本語入力の値が「入力欄から離れるまで」確定しないことがある。
-// 送信前に入力欄のフォーカスを外し、少し待ってから値を読む。
-async function _commitPendingInput() {
-    const el = document.activeElement;
-    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur();
-    await new Promise(r => setTimeout(r, 120));
-}
-
 async function signInSupabase() {
     if (!supabaseClient) return;
-    await _commitPendingInput();
     const email = document.getElementById('supabaseEmail').value.trim();
     const password = document.getElementById('supabasePassword').value;
     if (!email || !password) return;
@@ -339,17 +322,7 @@ async function signInSupabase() {
         ({ error } = await supabaseClient.auth.signInWithPassword({ email, password }));
     } catch (e) { error = e; } // 通信エラー等で例外になった場合も必ず知らせる
     if (error) {
-        const msg = error.message || String(error);
-        let hint = '';
-        if (/Invalid login credentials/i.test(msg)) {
-            hint = '\n\nメールアドレスまたはパスワードが一致しません。次を確認してください：'
-                + '\n・パスワード欄に、iPhoneの自動入力で別の値（Anon Keyなど）が入っていないか'
-                + '\n・メールアドレスの大文字/小文字や前後の空白'
-                + '\n・接続設定の Project URL が、ログインできている端末と同じか';
-        } else if (/Email not confirmed/i.test(msg)) {
-            hint = '\n\n登録確認メールのリンクをまだ開いていません。メールを確認してください。';
-        }
-        alert("ログインエラー: " + msg + hint);
+        alert("ログインエラー: " + (error.message || error));
         checkSupabaseAuth();
     } else {
         alert("ログインしました。クラウドのデータと同期します。");

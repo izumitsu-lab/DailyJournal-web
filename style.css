@@ -1751,5 +1751,3 @@ img[data-missing] { opacity: 0.35; background: rgba(128, 128, 128, 0.2); }
 .tab-inactive-title { font-size: 16px; font-weight: 800; }
 .tab-inactive-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 6px; }
 .tab-inactive-card .modal-btn { width: 100%; }
-/* Anon Key 欄：パスワード欄扱いにせず（iPhoneの自動入力の誤作動防止）、表示だけ伏せ字にする */
-.masked-input { -webkit-text-security: disc; }

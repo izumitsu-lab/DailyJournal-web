@@ -867,15 +867,15 @@
                     <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
                         ※GitHub等に公開しても安全なように、URLとキーはブラウザにのみ保存されます。
                     </div>
-                    <input type="url" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
-                    <input type="text" class="settings-text-input masked-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+                    <input type="text" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL">
+                    <input type="password" class="settings-text-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;">
                     <button type="button" class="data-action-btn primary-btn" style="margin-top: 8px;" onclick="saveSupabaseConfig()">接続設定を保存</button>
                 </div>
 
                 <div class="settings-card-box" id="supabaseAuthBox" style="display: none;">
                     <div class="settings-card-title">👤 アカウント認証</div>
-                    <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="email">
-                    <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" name="password" autocomplete="current-password" style="margin-top: 6px;">
+                    <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス">
+                    <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" style="margin-top: 6px;">
                     <div style="display: flex; gap: 8px; margin-top: 8px;">
                         <button type="button" class="data-action-btn" onclick="signUpSupabase()">新規登録</button>
                         <button type="button" class="data-action-btn primary-btn" onclick="signInSupabase()">ログイン</button>
