@@ -714,7 +714,107 @@ function sanitizeSettingsData(s) {
     return out;
 }
 
-async function _applySettingsData(s) {
+// ------------------------------------------
+// 設定の3方向マージ
+// ------------------------------------------
+// 以前は設定（タイプ・カテゴリ等）を「丸ごと1つ」として、編集時刻が新しい方で上書きしていた。
+// そのため、別の端末の変更をまだ受け取っていない端末で何か1つ編集すると、
+// その端末の古い一覧がクラウドを丸ごと上書きし、他の端末で追加したカテゴリやタイプが消えていた
+// （端末の時計がずれていると、逆に後からした編集の方が消えることもあった）。
+// → 「最後にクラウドと一致していた設定（基準）」を端末ごとに覚えておき、
+//    基準からの自分の変更だけをクラウドの最新版に重ねる（項目単位のマージ）。
+function _settingsBaseKey() { return 'daily_journal_settings_base_' + (supabaseUser ? supabaseUser.id : ''); }
+function _loadSettingsBase() {
+    try { const v = JSON.parse(localStorage.getItem(_settingsBaseKey()) || 'null'); return v ? sanitizeSettingsData(v) : null; } catch (e) { return null; }
+}
+function _saveSettingsBase(s) {
+    if (typeof isTabActive === 'function' && !isTabActive()) return;
+    if (!supabaseUser || !s) return;
+    localStorage.setItem(_settingsBaseKey(), JSON.stringify({
+        appTypes: s.appTypes || [], categories: s.categories || [],
+        typeSlackSettings: s.typeSlackSettings || {}, typeNotebookSettings: s.typeNotebookSettings || {},
+        _editedAt: s._editedAt || ''
+    }));
+}
+function _currentSettings() {
+    return sanitizeSettingsData({ appTypes, categories, typeSlackSettings, typeNotebookSettings, _editedAt: getSettingsEditedAt() });
+}
+
+// 並び順付きの一覧（タイプ名 / カテゴリ）のマージ。keyOf で同一項目を判定し、pick で中身を選ぶ
+function _mergeOrderedList(base, local, remote, keyOf, pick) {
+    base = base || null; local = local || []; remote = remote || [];
+    const bMap = new Map((base || []).map(x => [keyOf(x), x]));
+    const lMap = new Map(local.map(x => [keyOf(x), x]));
+    const rMap = new Map(remote.map(x => [keyOf(x), x]));
+    const keep = new Map();
+    for (const [k, r] of rMap) {
+        if (base && bMap.has(k) && !lMap.has(k)) continue;          // この端末で削除した
+        keep.set(k, pick(bMap.get(k), lMap.get(k), r));
+    }
+    for (const [k, l] of lMap) {
+        if (rMap.has(k)) continue;
+        // 基準にあってクラウドにない ＝ 他の端末で削除された。この端末で手を加えていなければ削除を受け入れる
+        if (base && bMap.has(k) && _sameItem(bMap.get(k), l)) continue;
+        keep.set(k, l);                                              // この端末で追加した（または削除と編集が競合→残す）
+    }
+
+    // 並び順：この端末で並べ替えていればこの端末の順、そうでなければクラウドの順（新規分はこの端末での位置の近くへ）
+    const common = (arr) => arr.map(keyOf).filter(k => bMap.has(k) && lMap.has(k));
+    const localReordered = !!base && JSON.stringify(common(local)) !== JSON.stringify(common(base).filter(k => lMap.has(k)));
+    const order = [];
+    const seen = new Set();
+    const push = k => { if (keep.has(k) && !seen.has(k)) { seen.add(k); order.push(k); } };
+    if (localReordered) { local.forEach(x => push(keyOf(x))); remote.forEach(x => push(keyOf(x))); }
+    else {
+        // クラウドの順に並べ、この端末で追加した項目は、直前の項目の後ろに差し込む
+        const remoteKeys = remote.map(keyOf);
+        const afterMap = new Map();
+        let prev = null;
+        for (const x of local) {
+            const k = keyOf(x);
+            if (!rMap.has(k)) { const arr = afterMap.get(prev) || []; arr.push(k); afterMap.set(prev, arr); }
+            else prev = k;
+        }
+        (afterMap.get(null) || []).forEach(push);
+        for (const k of remoteKeys) { push(k); (afterMap.get(k) || []).forEach(push); }
+        local.forEach(x => push(keyOf(x)));
+    }
+    return order.map(k => keep.get(k));
+}
+function _sameItem(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+
+// { キー: 真偽 } のマージ（キー単位で、この端末が変えたものだけ優先）
+function _mergeBoolMap(base, local, remote) {
+    base = base || null; local = local || {}; remote = remote || {};
+    const out = {};
+    const keys = new Set([...Object.keys(local), ...Object.keys(remote), ...Object.keys(base || {})]);
+    for (const k of keys) {
+        const inB = !!base && k in base, inL = k in local, inR = k in remote;
+        if (inB && !inL) continue;                                  // この端末で削除
+        if (inL && (!inB || local[k] !== base[k])) { out[k] = local[k]; continue; } // この端末で追加・変更
+        if (inR) { out[k] = remote[k]; continue; }                  // クラウドの値（他端末の変更を含む）
+        if (inL && !inB) out[k] = local[k];
+        // inB && inL && !inR（他端末で削除・この端末は未変更）→ 削除を受け入れる
+    }
+    return out;
+}
+
+function _mergeSettings(base, local, remote) {
+    const typePick = (b, l, r) => r;
+    const catPick = (b, l, r) => {
+        if (l && (!b || l.type !== b.type)) return l;   // この端末で追加・所属タイプ変更
+        return r || l;
+    };
+    return {
+        appTypes: _mergeOrderedList(base && base.appTypes, local.appTypes, remote.appTypes, x => x, typePick),
+        categories: _mergeOrderedList(base && base.categories, local.categories, remote.categories, x => x.name, catPick),
+        typeSlackSettings: _mergeBoolMap(base && base.typeSlackSettings, local.typeSlackSettings, remote.typeSlackSettings),
+        typeNotebookSettings: _mergeBoolMap(base && base.typeNotebookSettings, local.typeNotebookSettings, remote.typeNotebookSettings),
+        _editedAt: remote._editedAt
+    };
+}
+
+async function _applySettingsData(s, editedAt = s._editedAt) {
     if (s.appTypes && s.appTypes.length) {
         appTypes.splice(0, appTypes.length, ...s.appTypes);
         localStorage.setItem('daily_journal_types', JSON.stringify(appTypes));
@@ -733,21 +833,35 @@ async function _applySettingsData(s) {
         Object.assign(typeNotebookSettings, s.typeNotebookSettings);
         localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings));
     }
-    localStorage.setItem(SETTINGS_EDITED_AT_KEY, s._editedAt || '');
+    localStorage.setItem(SETTINGS_EDITED_AT_KEY, editedAt || '');
     if (typeof syncAndMigrateCategories === 'function') await syncAndMigrateCategories();
 }
 
-// 戻り値: ローカル設定が変わったら true
+// 戻り値: ローカル設定（画面に出る内容）が変わったら true
 async function mergeRemoteSettingsRow(row) {
     const s = sanitizeSettingsData(row && row.settings_data);
     if (!s) return false;
     const localEdited = getSettingsEditedAt();
-    if (pendingSettingsDirty && localEdited > s._editedAt) return false; // ローカルの未送信変更の方が新しい → 送信で反映
-    if (!pendingSettingsDirty && localEdited && localEdited === s._editedAt) return false; // 同一
-    await _applySettingsData(s);
-    pendingSettingsDirty = false;
+
+    if (!pendingSettingsDirty) {
+        // この端末に未送信の変更はない → クラウドの設定をそのまま採用
+        if (localEdited && localEdited === s._editedAt) { _saveSettingsBase(s); return false; } // 同一
+        const before = JSON.stringify(_currentSettings());
+        await _applySettingsData(s);
+        _saveSettingsBase(s);
+        _persistPending();
+        return JSON.stringify(_currentSettings()) !== before;
+    }
+
+    // この端末に未送信の変更がある → 基準からの自分の変更だけをクラウドの最新版に重ねる（時刻の新旧では決めない）
+    const local = _currentSettings();
+    const merged = _mergeSettings(_loadSettingsBase(), local, s);
+    const before = JSON.stringify(local);
+    // マージ結果は送信するので未送信のまま。送信する版には新しい編集時刻を付け、他端末が確実に取り込むようにする
+    await _applySettingsData(merged, new Date().toISOString());
+    _saveSettingsBase(s); // 自分の変更は「クラウドの s からの差分」になった
     _persistPending();
-    return true;
+    return JSON.stringify(_currentSettings()) !== before;
 }
 
 // 自分が送信したノートの edited_at（リアルタイムで戻ってくるエコーを「他端末の更新」と誤認しないため）
@@ -790,19 +904,19 @@ async function _pushSettings() {
     const ver = _settingsDirtyVer;
     const { data: remote, error: rErr } = await supabaseClient.from('app_settings').select('*').eq('user_id', supabaseUser.id).maybeSingle();
     if (rErr) throw rErr;
-    if (remote && await mergeRemoteSettingsRow(remote)) { refreshUIAfterSync(); return; }
+    // ※以前はここでクラウド側を採用したら送信せずに終えていたが、マージ後の自分の変更も送る必要がある
+    if (remote && await mergeRemoteSettingsRow(remote)) refreshUIAfterSync();
     if (!pendingSettingsDirty) return;
 
-    const payload = {
-        user_id: supabaseUser.id,
-        settings_data: {
-            appTypes, categories, typeSlackSettings, typeNotebookSettings,
-            _editedAt: getSettingsEditedAt() || new Date().toISOString()
-        },
-        updated_at: new Date().toISOString()
-    };
+    if (!getSettingsEditedAt()) localStorage.setItem(SETTINGS_EDITED_AT_KEY, new Date().toISOString());
+    const data = JSON.parse(JSON.stringify({
+        appTypes, categories, typeSlackSettings, typeNotebookSettings,
+        _editedAt: getSettingsEditedAt()
+    }));
+    const payload = { user_id: supabaseUser.id, settings_data: data, updated_at: new Date().toISOString() };
     const { error } = await supabaseClient.from('app_settings').upsert(payload);
     if (error) throw error;
+    _saveSettingsBase(sanitizeSettingsData(data));
     if (ver === _settingsDirtyVer) pendingSettingsDirty = false;
 }
 
