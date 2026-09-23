@@ -2672,3 +2672,182 @@ document.getElementById('journalCarouselContainer').addEventListener('scroll', (
         }
     }, 60);
 }, { passive: true });
+
+// ==========================================
+// 過去の写真をまとめて縮小（設定 > データ）
+// ==========================================
+// 保存済みの記録の写真を、指定の大きさ・画質で保存し直す。元の画質には戻せないので、実行前にバックアップを促す。
+// 縮小した写真は新しい画像として保存・同期され、古い画像は
+//   ・端末内：画像ストアの掃除で自動的に削除
+//   ・クラウド：「不要な画像を削除」で削除（古くアップロードされた画像なので、すぐに対象になる）
+// ノートの画像は、図や画面写真など文字が読めないと困るものが多いので対象外。
+let _bulkShrinkRunning = false;
+// 画質ごとのファイルサイズの目安（画質85%を1とした比。計測値）
+const _BULK_QUALITY_FACTOR = { 0.85: 1, 0.8: 0.9, 0.75: 0.84, 0.7: 0.83 };
+
+function _bulkCutoffKey(months) {
+    if (!months) return null;
+    const d = new Date(); d.setMonth(d.getMonth() - months);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+// JPEG / PNG の縦横を、画像を展開せずにファイルの先頭から読む
+function _imageDimsFromDataUrl(d) {
+    try {
+        const comma = d.indexOf(',');
+        const head = atob(d.substr(comma + 1, 87380).replace(/[^A-Za-z0-9+/]/g, '').slice(0, 87380 - (87380 % 4)));
+        const b = i => head.charCodeAt(i);
+        if (b(0) === 0x89 && b(1) === 0x50) return { w: (b(16) << 24 | b(17) << 16 | b(18) << 8 | b(19)) >>> 0, h: (b(20) << 24 | b(21) << 16 | b(22) << 8 | b(23)) >>> 0 };
+        if (b(0) !== 0xFF || b(1) !== 0xD8) return null;
+        let i = 2;
+        while (i + 9 < head.length) {
+            if (b(i) !== 0xFF) { i++; continue; }
+            const m = b(i + 1);
+            if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) return { h: b(i + 5) << 8 | b(i + 6), w: b(i + 7) << 8 | b(i + 8) };
+            if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7)) { i += 2; continue; }
+            i += 2 + (b(i + 2) << 8 | b(i + 3));
+        }
+    } catch (e) {}
+    return null;
+}
+function _resizeDataUrl(dataUrl, max, quality) {
+    return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+            try {
+                const w0 = img.naturalWidth, h0 = img.naturalHeight, s = Math.min(1, max / Math.max(w0, h0));
+                const c = document.createElement('canvas');
+                c.width = Math.max(1, Math.round(w0 * s)); c.height = Math.max(1, Math.round(h0 * s));
+                c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+                const out = c.toDataURL('image/jpeg', quality);
+                c.width = 0; c.height = 0; img.src = IMG_PLACEHOLDER;
+                resolve(out);
+            } catch (e) { resolve(null); }
+        };
+        img.onerror = () => resolve(null);
+        img.src = dataUrl;
+    });
+}
+
+// 対象の写真を集める（画像は1枚ずつ読み、縦横と大きさだけを見る）
+async function collectBulkShrinkTargets(months, presetKey, onProgress) {
+    const p = PHOTO_QUALITY_PRESETS[presetKey];
+    const cutoff = _bulkCutoffKey(months);
+    const items = [];
+    let small = 0, missing = 0, beforeBytes = 0, estAfter = 0;
+    const seen = new Set();
+    const dates = Object.keys(journalData).filter(d => !cutoff || d < cutoff).sort();
+    const all = [];
+    for (const d of dates) for (const log of (journalData[d] || [])) (log.images || []).forEach((ref, idx) => all.push({ d, id: log.id, idx, ref }));
+    let n = 0;
+    for (const it of all) {
+        if (onProgress && (++n % 10 === 0)) onProgress(n, all.length);
+        const h = idbRefHash(it.ref);
+        const data = h ? await readStoredImage(h) : (isDataImage(it.ref) ? it.ref : null);
+        if (!data) { missing++; continue; }
+        const dims = _imageDimsFromDataUrl(data) || await new Promise(res => { const i = new Image(); i.onload = () => { res({ w: i.naturalWidth, h: i.naturalHeight }); i.src = IMG_PLACEHOLDER; }; i.onerror = () => res(null); i.src = data; });
+        const bytes = dataUrlBytes(data);
+        const L = dims ? Math.max(dims.w, dims.h) : 0;
+        if (!L || L <= p.maxDimension) { small++; continue; }
+        // 同じ写真が複数の記録に付いている場合、容量は1回分だけ数える
+        const key = h || _nbThumbKey(data);
+        const dup = seen.has(key); seen.add(key);
+        const est = Math.round(bytes * Math.pow(p.maxDimension / L, 2) * (_BULK_QUALITY_FACTOR[p.quality] || 0.85));
+        if (!dup) { beforeBytes += bytes; estAfter += est; }
+        items.push(Object.assign(it, { bytes, est }));
+    }
+    return { items, small, missing, beforeBytes, estAfter, preset: p, cutoff };
+}
+
+function clearBulkShrinkResult() {
+    if (_bulkShrinkRunning) return;
+    const el = document.getElementById('bulkShrinkResult');
+    if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+}
+function _bulkShrinkOptions() {
+    const months = parseInt(document.getElementById('bulkShrinkAge').value, 10) || 0;
+    const presetKey = document.getElementById('bulkShrinkPreset').value;
+    return { months, presetKey: PHOTO_QUALITY_PRESETS[presetKey] ? presetKey : 'saver' };
+}
+function _bulkShrinkShow(html) {
+    const el = document.getElementById('bulkShrinkResult');
+    el.style.display = 'block'; el.innerHTML = html;
+}
+
+async function previewBulkShrink() {
+    if (_bulkShrinkRunning) return;
+    const { months, presetKey } = _bulkShrinkOptions();
+    _bulkShrinkShow('写真を確認しています…');
+    const plan = await collectBulkShrinkTargets(months, presetKey, (i, t) => _bulkShrinkShow(`写真を確認しています… ${i} / ${t}`));
+    const target = months ? `${plan.cutoff.replace(/-/g, '/')} より前の写真` : 'すべての写真';
+    if (!plan.items.length) {
+        _bulkShrinkShow(`${escapeHtml(target)}のうち、「${plan.preset.label}」より大きい写真はありません。` + (plan.small ? `<div class="bs-note">すでに ${plan.preset.maxDimension}px 以下の写真 ${plan.small} 枚はそのままです。</div>` : ''));
+        return;
+    }
+    const freed = Math.max(0, plan.beforeBytes - plan.estAfter);
+    _bulkShrinkShow(`
+        <div>${escapeHtml(target)}：<span class="bs-num">${plan.items.length} 枚</span>を「${plan.preset.label}」（長い辺 ${plan.preset.maxDimension}px）に縮小</div>
+        <div>容量：<span class="bs-num">${formatKB(plan.beforeBytes)} → 約 ${formatKB(plan.estAfter)}</span>（約 <span class="bs-num">${formatKB(freed)}</span> 空く見込み）</div>
+        ${plan.small ? `<div class="bs-note">すでに ${plan.preset.maxDimension}px 以下の写真 ${plan.small} 枚はそのままです。</div>` : ''}
+        ${plan.missing ? `<div class="bs-note">この端末に画像がない写真 ${plan.missing} 枚は対象外です。</div>` : ''}
+        <div class="bs-note">クラウドの容量は、縮小の後に「クラウドの不要な画像を削除」を実行すると空きます。</div>
+        <div class="bs-warn">⚠️ 元の画質には戻せません。先にバックアップ（データのエクスポート）を書き出しておくことをおすすめします。</div>
+        <div class="bs-actions">
+            <button type="button" class="data-action-btn" onclick="exportData()">① バックアップを書き出す</button>
+            <button type="button" class="data-action-btn primary-btn" onclick="runBulkShrink()">② 縮小を実行する</button>
+        </div>`);
+}
+
+async function runBulkShrink() {
+    if (_bulkShrinkRunning) return;
+    if (typeof isTabActive === 'function' && !isTabActive()) return;
+    const { months, presetKey } = _bulkShrinkOptions();
+    const plan = await collectBulkShrinkTargets(months, presetKey);
+    if (!plan.items.length) { previewBulkShrink(); return; }
+    if (!confirm(`${plan.items.length} 枚の写真を「${plan.preset.label}」（長い辺 ${plan.preset.maxDimension}px）に縮小します。\n元の画質には戻せません。バックアップは書き出しましたか？\n\n続行しますか？`)) return;
+
+    _bulkShrinkRunning = true;
+    const btn = document.getElementById('bulkShrinkCheckBtn'); if (btn) btn.disabled = true;
+    let done = 0, changed = 0, before = 0, after = 0, sinceSave = 0;
+    const counted = new Set();
+    const progress = () => _bulkShrinkShow(`縮小しています… ${done} / ${plan.items.length}<div class="bulk-shrink-progress"><div style="width:${Math.round(done / plan.items.length * 100)}%"></div></div><div class="bs-note">完了までこの画面のままお待ちください。</div>`);
+    progress();
+    const converted = new Map(); // 元の参照 -> 縮小後（同じ写真を複数の記録で使っていれば1回だけ縮小）
+    try {
+        for (const it of plan.items) {
+            if (typeof isTabActive === 'function' && !isTabActive()) break;
+            done++;
+            const log = findLogById(it.d, it.id);
+            if (!log || !log.images || log.images[it.idx] !== it.ref) { progress(); continue; } // 途中で編集・削除された
+            let out = converted.get(it.ref);
+            if (out === undefined) {
+                const h = idbRefHash(it.ref);
+                const data = h ? await readStoredImage(h) : it.ref;
+                out = data ? await _resizeDataUrl(data, plan.preset.maxDimension, plan.preset.quality) : null;
+                if (out && dataUrlBytes(out) >= it.bytes) out = null; // 小さくならなければそのまま
+                converted.set(it.ref, out);
+                if (out && !counted.has(it.ref)) { counted.add(it.ref); before += it.bytes; after += dataUrlBytes(out); }
+            }
+            const cur = findLogById(it.d, it.id);
+            if (out && cur && cur.images[it.idx] === it.ref) {
+                cur.images[it.idx] = out; changed++; sinceSave++;
+                // 置き換えた元の画像は、この起動中に保存したものでも掃除の対象にする（どこからも使われていなければ消える）
+                const oh = idbRefHash(it.ref); if (oh && typeof _sessionStoredHashes !== 'undefined') _sessionStoredHashes.delete(oh);
+            }
+            // こまめに保存して、縮小後の画像を画像ストアへ移しメモリから手放す
+            if (sinceSave >= 8) { await saveJournalData(); sinceSave = 0; converted.clear(); }
+            progress();
+        }
+        await saveJournalData();
+    } finally {
+        _bulkShrinkRunning = false;
+        if (btn) btn.disabled = false;
+    }
+    setTimeout(() => { if (typeof garbageCollectImages === 'function') garbageCollectImages(); }, 1500);
+    renderRightCards();
+    const loggedIn = typeof supabaseUser !== 'undefined' && supabaseUser;
+    _bulkShrinkShow(`
+        <div>✅ <span class="bs-num">${changed} 枚</span>を縮小しました（${formatKB(before)} → ${formatKB(after)}、<span class="bs-num">${formatKB(Math.max(0, before - after))}</span> 削減）</div>
+        <div class="bs-note">この端末の古い画像は自動で削除されます。${loggedIn ? '縮小した写真はクラウドへ送信され、他の端末にも反映されます。' : ''}</div>
+        ${loggedIn ? `<div class="bs-note">クラウドの古い画像を消して容量を空けるには、下のボタンを押してください（未送信の分は先に送信されます。7日以内にアップロードされた画像は安全のため後日の対象になります）。</div>
+        <div class="bs-actions"><button type="button" class="data-action-btn" onclick="cleanupUnusedCloudImages()">クラウドの不要な画像を削除</button></div>` : ''}`);
+}

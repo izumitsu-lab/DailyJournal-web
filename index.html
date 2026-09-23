@@ -870,6 +870,28 @@
                     </div>
                     <button class="data-action-btn" onclick="triggerImport()">読み込み</button>
                 </div>
+                <div class="option-group" style="flex-direction: column; align-items: stretch; gap: 8px;">
+                    <div>
+                        <span class="option-title">過去の写真をまとめて縮小</span>
+                        <div class="option-desc">記録の日付が指定より前の写真を、選んだ大きさで保存し直して容量を空けます。元の画質には戻せません。すでに指定より小さい写真はそのままです（ノートの画像は対象外）。</div>
+                    </div>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                        <select class="settings-select" id="bulkShrinkAge" onchange="clearBulkShrinkResult()" style="flex: 1; min-width: 130px;">
+                            <option value="1">1か月より前</option>
+                            <option value="3" selected>3か月より前</option>
+                            <option value="6">6か月より前</option>
+                            <option value="12">1年より前</option>
+                            <option value="0">すべて</option>
+                        </select>
+                        <select class="settings-select" id="bulkShrinkPreset" onchange="clearBulkShrinkResult()" style="flex: 1; min-width: 130px;">
+                            <option value="standard">標準 1200px</option>
+                            <option value="saver" selected>節約 1000px</option>
+                            <option value="minimum">最小 800px</option>
+                        </select>
+                    </div>
+                    <button type="button" class="data-action-btn" id="bulkShrinkCheckBtn" onclick="previewBulkShrink()">対象の枚数と空く容量を調べる</button>
+                    <div id="bulkShrinkResult" class="bulk-shrink-result" style="display: none;"></div>
+                </div>
                 <input type="file" id="importFile" style="display: none;" accept=".json" onchange="importData(event)">
             </div>
 

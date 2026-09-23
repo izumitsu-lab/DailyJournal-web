@@ -242,6 +242,15 @@ async function getImageData(hash) {
     try { return await p; } finally { _imgLoading.delete(hash); }
 }
 
+// 一括処理用：画像ストアから読むが、表示用キャッシュには入れない（大量に読んでも表示中の画像を追い出さない）
+async function readStoredImage(hash) {
+    const c = _imgCache.get(hash);
+    if (c !== undefined) return c;
+    const db = await initDB();
+    const d = await new Promise((res, rej) => { const r = db.transaction(IMG_STORE, 'readonly').objectStore(IMG_STORE).get(hash); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    return typeof d === 'string' ? d : null;
+}
+
 async function storeImage(hash, dataUrl) {
     if (!_storedImageHashes.has(hash)) {
         const db = await initDB();

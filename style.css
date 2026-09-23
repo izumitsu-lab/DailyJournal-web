@@ -1763,3 +1763,13 @@ img[data-missing] { opacity: 0.35; background: rgba(128, 128, 128, 0.2); }
 .tab-inactive-card .modal-btn { width: 100%; }
 /* Anon Key 欄：パスワード欄扱いにせず（iPhoneの自動入力の誤作動防止）、表示だけ伏せ字にする */
 .masked-input { -webkit-text-security: disc; }
+
+/* 過去の写真をまとめて縮小 */
+.bulk-shrink-result { font-size: 12px; line-height: 1.6; color: var(--text-primary); background: var(--item-bg); border: 1px solid var(--item-border); border-radius: 10px; padding: 10px 12px; }
+.bulk-shrink-result .bs-num { font-weight: 800; }
+.bulk-shrink-result .bs-note { color: var(--text-secondary); font-size: 11.5px; margin-top: 4px; }
+.bulk-shrink-result .bs-warn { color: #e67e22; font-weight: 700; font-size: 11.5px; margin-top: 6px; }
+.bulk-shrink-result .bs-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.bulk-shrink-result .bs-actions .data-action-btn { flex: 1; min-width: 140px; }
+.bulk-shrink-progress { height: 6px; border-radius: 3px; background: var(--item-border); overflow: hidden; margin-top: 6px; }
+.bulk-shrink-progress > div { height: 100%; background: var(--accent-color); transition: width 0.2s; }

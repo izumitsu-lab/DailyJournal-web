@@ -3,7 +3,7 @@
   "private": true,
   "description": "Daily Journal の自動テスト（偽のSupabaseに複数端末をつないで同期・XSS・UIを確認）",
   "scripts": {
-    "test": "node test-sync.js && node test-ui.js && node test-round2.js && node test-round3.js && node test-settings.js && node test-settings-initial.js && node test-stability.js && node test-photo-quality.js"
+    "test": "node test-sync.js && node test-ui.js && node test-round2.js && node test-round3.js && node test-settings.js && node test-settings-initial.js && node test-stability.js && node test-photo-quality.js && node test-bulk-shrink.js"
   },
   "devDependencies": {
     "jszip": "^3.10.2",
