@@ -863,6 +863,13 @@ function jumpToCurrentScopePeriodFromPopup() {
 // ※以前は途中のカードを高速で流して移動していた（遠い日ほど長く流れる）。ポップアップを閉じ、軽くフェードして表示を差し替える。
 function jumpToDateFromPopup(dk) {
     closeModal('fullscreenCalendarModal');
+    jumpToDateInstant(dk);
+}
+
+// 日付へ「ぱっと」切り替える共通処理（左サイドバーのカレンダー・ポップアップのカレンダーの両方で使う）
+// ※カードを横に流すスクロールや、タイムラインを縦に流すスクロールはしない。
+//   指でのスワイプ・スクロールの動き（カルーセルの滑らかな動作）には影響しない。
+function jumpToDateInstant(dk) {
     const c = document.getElementById('journalCarouselContainer');
     c.style.transition = 'none';
     c.style.opacity = '0';

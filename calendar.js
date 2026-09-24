@@ -76,34 +76,9 @@ function renderMiniCalendar(anim = null) {
 
         b.className = cls.join(' '); b.textContent = d;
         b.onclick = () => {
-            // カレンダーの日付タップ時は検索を解除して通常ビューへ復帰
-            if (journalSearchQuery) {
-                clearJournalSearch();
-            }
-            if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); renderRightCards(); }
-
-            activeDateKey = dk;
-            if (!dateList.includes(dk)) { dateList.push(dk); dateList.sort(); }
-            renderMiniCalendar();
-            if (typeof renderFullscreenCalendar === 'function') renderFullscreenCalendar();
-            const c = document.getElementById('journalCarouselContainer');
-
-            if (calendarScope === 'day') {
-                if (c.querySelector(`[data-key="${dk}"]`)) smoothScrollToKey(dk);
-                else { renderDayCarousel(); smoothScrollToKey(dk); }
-            } else if (calendarScope === 'photo') { 
-                smoothScrollToPhotoDate(dk);
-            } else if (calendarScope === 'week') {
-                const { monStr } = getWeekRangeFromDate(dk); const a = getActiveCarouselPanel();
-                if (a && a.dataset.key === monStr) scrollToTimelineDateInPanel(a, dk, true);
-                else if (c.querySelector(`[data-key="${monStr}"]`)) { smoothScrollToKey(monStr); scrollToTimelineDateInPanel(c.querySelector(`[data-key="${monStr}"]`), dk, true); }
-                else renderWeekCarousel();
-            } else if (calendarScope === 'month') {
-                const mPre = dk.substring(0, 7); const a = getActiveCarouselPanel();
-                if (a && a.dataset.key === mPre) scrollToTimelineDateInPanel(a, dk, true);
-                else if (c.querySelector(`[data-key="${mPre}"]`)) { smoothScrollToKey(mPre); scrollToTimelineDateInPanel(c.querySelector(`[data-key="${mPre}"]`), dk, true); }
-                else renderMonthCarousel();
-            }
+            // 左サイドバーのカレンダーで日付を選んだときは、横・縦に流すスクロールをせず、その日へぱっと切り替える
+            // （検索・しおり一覧の解除もこの中で行う。指でのスワイプの滑らかな動きはそのまま）
+            jumpToDateInstant(dk);
         };
         g.appendChild(b);
     }
