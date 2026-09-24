@@ -1933,3 +1933,21 @@ body.focus-mode .connected-view-container { max-width: 980px; margin-left: auto;
 .sync-alert-dot { position: absolute; top: -2px; right: -5px; width: 8px; height: 8px; border-radius: 50%; background: transparent; box-shadow: 0 0 0 2px var(--card-bg); display: none; }
 .sync-alert-dot.warn { display: block; background: #f39c12; }
 .sync-alert-dot.error { display: block; background: #e74c3c; }
+
+/* ノートのカード：ボタン類は「NOTEBOOKS」の行に置き、タイトルは横幅いっぱいを使う
+   （以前はタイトルの右にボタンが並び、iPhone ではタイトルが全角8〜9文字で折り返していた） */
+.nb-card-header { position: relative; }
+.nb-card-header > .date-title-wrapper { min-width: 0; }
+.nb-card-header > .date-title-wrapper > .date-eyebrow { min-height: 32px; display: flex; align-items: center; margin-bottom: 0 !important; padding-right: 150px; }
+.nb-card-header > .header-actions { position: absolute; top: 2px; right: 0; margin-top: 0 !important; height: 32px; }
+.nb-card-header .notebook-title-view { word-break: break-word; overflow-wrap: anywhere; }
+
+/* 追記・編集画面の見出し：タイトルは折り返さず、狭いときは時刻のバッジを次の行へ */
+#addModal .modal-header, #editModal .modal-header { flex-wrap: wrap; row-gap: 6px; }
+#addModal .modal-header > div:first-child > span:first-child, #editModal .modal-header > div:first-child > span:first-child { white-space: nowrap; }
+@media (max-width: 360px) {
+    #addModal .modal-header .hide-narrow { display: none; }
+    #addModal .modal-header, #editModal .modal-header { font-size: 15px; gap: 6px; }
+    #addModal .modal-header .modal-target-badge, #editModal .modal-header .modal-target-badge { font-size: 11px; padding: 3px 8px; }
+    #addModal .modal-header .modal-time-badge, #editModal .modal-header .modal-time-badge { font-size: 12px; padding: 4px 8px; }
+}

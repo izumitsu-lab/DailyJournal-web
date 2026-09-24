@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.24-5">
+    <link rel="stylesheet" href="style.css?v=2026.09.24-6">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.24-5';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.24-6';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -406,7 +406,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <span>タイムラインに追記</span>
+                    <span><span class="hide-narrow">タイムラインに</span>追記</span>
                     <label class="slot-picker" title="タップして過去の日に書き足す"><span class="modal-target-badge" id="modalTargetDateBadge">今日</span><input type="date" class="slot-input" id="addSlotDate" onclick="openSlotPicker(this)" onchange="changeAddSlot()"></label>
                 </div>
                 <label class="slot-picker" title="タップして時刻を変える"><span class="modal-time-badge" id="modalCurrentTimeBadge">12:00</span><input type="time" class="slot-input" id="addSlotTime" onclick="openSlotPicker(this)" onchange="changeAddSlot()"></label>
@@ -1068,14 +1068,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.24-5"></script>
-    <script src="main.js?v=2026.09.24-5"></script>
-    <script src="calendar.js?v=2026.09.24-5"></script>
-    <script src="notebooks.js?v=2026.09.24-5"></script>
-    <script src="ui.js?v=2026.09.24-5"></script>
+    <script src="purify.min.js?v=2026.09.24-6"></script>
+    <script src="main.js?v=2026.09.24-6"></script>
+    <script src="calendar.js?v=2026.09.24-6"></script>
+    <script src="notebooks.js?v=2026.09.24-6"></script>
+    <script src="ui.js?v=2026.09.24-6"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.24-5"></script>
+    <script src="supabase-sync.js?v=2026.09.24-6"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 

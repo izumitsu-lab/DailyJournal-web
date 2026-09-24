@@ -2971,7 +2971,7 @@ let _addSlot = null;   // null = いま
 let _editSlot = null;  // 編集中の記録の日時
 function openSlotPicker(inp) { try { if (inp.showPicker) inp.showPicker(); } catch (e) {} }
 function _slotIsFuture(date, time) { return Date.parse(slotToIso(date, time)) > Date.now(); }
-function _slotDateLabel(date) { return date === getTodayKey() ? `今日 (${formatShortDate(date)})` : formatShortDate(date); }
+function _slotDateLabel(date) { return date === getTodayKey() ? '今日' : formatShortDate(date); }
 function _readSlot(dateId, timeId, fallback) {
     const today = getTodayKey();
     let date = document.getElementById(dateId).value || fallback.date;
