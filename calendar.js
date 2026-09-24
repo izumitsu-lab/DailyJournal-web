@@ -149,13 +149,10 @@ function clearJournalSearch() {
 }
 
 function jumpToCurrentScopePeriod() {
-    if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); renderRightCards(); }
-    if (journalSearchQuery) {
-        clearJournalSearch();
-    }
-
     // Notebooksモード時は Gallery View（一覧）へ復帰
     if (calendarScope === 'notebooks') {
+        if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); }
+        if (journalSearchQuery) clearJournalSearch();
         if (notebookViewMode !== 'grid') {
             setNotebookViewMode('grid');
         } else {
@@ -163,33 +160,15 @@ function jumpToCurrentScopePeriod() {
         }
         return;
     }
-    
-    const todayStr = getTodayKey(); activeDateKey = todayStr;
+
+    // 下メニューの「今日」・左サイドバーの「今日に戻る」：横・縦に流すスクロールをせず、今日へぱっと切り替える
+    // （検索・しおり一覧の解除も jumpToDateInstant の中で行う。指でのスワイプの滑らかな動きはそのまま）
+    const todayStr = getTodayKey();
     const now = new Date(); miniCalYear = now.getFullYear(); miniCalMonth = now.getMonth();
-    if (!dateList.includes(todayStr)) { dateList.push(todayStr); dateList.sort(); }
+    jumpToDateInstant(todayStr);
 
-    updateScopeButtonsUI(); updateJumpButtonLabel(); 
+    updateScopeButtonsUI(); updateJumpButtonLabel();
     if (sidebarMode === 'cal') updateSidebars();
-    
-    const c = document.getElementById('journalCarouselContainer');
-
-    if (calendarScope === 'day') {
-        if (c.querySelector(`[data-key="${todayStr}"]`)) smoothScrollToKey(todayStr);
-        else { renderDayCarousel(); smoothScrollToKey(todayStr); }
-    } else if (calendarScope === 'photo') { 
-        smoothScrollToPhotoDate(todayStr);
-    } else if (calendarScope === 'week') {
-        const { monStr } = getWeekRangeFromDate(todayStr);
-        const a = getActiveCarouselPanel();
-        if (a && a.dataset.key === monStr) scrollToTimelineDateInPanel(a, todayStr, true);
-        else if (c.querySelector(`[data-key="${monStr}"]`)) { smoothScrollToKey(monStr); scrollToTimelineDateInPanel(c.querySelector(`[data-key="${monStr}"]`), todayStr, true); }
-        else { renderWeekCarousel(); }
-    } else if (calendarScope === 'month') {
-        const pre = todayStr.substring(0, 7); const a = getActiveCarouselPanel();
-        if (a && a.dataset.key === pre) scrollToTimelineDateInPanel(a, todayStr, true);
-        else if (c.querySelector(`[data-key="${pre}"]`)) { smoothScrollToKey(pre); scrollToTimelineDateInPanel(c.querySelector(`[data-key="${pre}"]`), todayStr, true); }
-        else { renderMonthCarousel(); }
-    }
 
     setTimeout(() => {
         const p = getActiveCarouselPanel();
