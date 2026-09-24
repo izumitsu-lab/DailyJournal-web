@@ -1248,7 +1248,7 @@ function renderCardViewMode(container, filteredNotebooks, filterBadgeHtml) {
 
         cardPanel.innerHTML = `
             <div class="main-display" style="--tab-color: var(--notebook-color);">
-                <div class="display-header compact-header" style="align-items: flex-start;">
+                <div class="display-header compact-header nb-card-header" style="align-items: flex-start;">
                     <div class="date-title-wrapper" style="width: 100%;">
                         <span class="date-eyebrow" style="color: var(--notebook-color); margin-bottom: 4px;">NOTEBOOKS</span>
                         ${buildNotebookTitleHtml(n)}
