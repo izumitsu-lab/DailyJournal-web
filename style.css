@@ -1907,3 +1907,13 @@ body.light-theme { --pin: #d9a54c; --pin-bg: #fbf7ee; --pin-border: rgba(176, 12
 .ios-cal .mini-cal-day.month-selected.today { color: var(--accent-color); font-weight: 800; }
 .ios-cal .mini-cal-day.month-selected.day-focus { color: #fff !important; font-weight: 700; }
 .ios-cal .mini-cal-day.month-selected.day-focus { background: transparent !important; }
+
+/* リンクのポップアップ：ギャラリーと同じ四角いカードを縦に並べる */
+.ios-link-cards { display: flex; flex-direction: column; gap: 12px; padding-bottom: 2px; }
+body .ios-link-cards .ios-link-card { width: 100%; aspect-ratio: 1 / 0.82 !important; min-height: 0; flex-shrink: 0; padding: 16px; }
+.ios-link-cards .ios-link-card:hover { transform: none; }
+.ios-link-cards .ios-link-card:active { transform: scale(0.98); }
+.ios-link-cards .ios-link-card .notebook-grid-title { font-size: 16px; }
+.ios-link-cards .ios-link-card .notebook-grid-preview { font-size: 13.5px; }
+.ios-link-cards .ios-link-card .notebook-grid-preview::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(transparent, var(--item-bg)); }
+.ios-card-unlink { opacity: 0.85; color: var(--reset-btn-bg); }

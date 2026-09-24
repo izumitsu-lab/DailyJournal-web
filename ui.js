@@ -101,7 +101,7 @@ function smoothScrollToKey(key) {
     return false;
 }
 
-function smoothScrollToPhotoDate(dateKey) {
+function smoothScrollToPhotoDate(dateKey, instant = false) {
     const container = document.getElementById('journalCarouselContainer');
     let t = container.querySelector(`[data-date="${dateKey}"]`);
     if (!t) {
@@ -111,9 +111,10 @@ function smoothScrollToPhotoDate(dateKey) {
     if (t) {
         isProgrammaticScroll = true;
         if (t.dataset.key) lastPhotoPanelKey = t.dataset.key;
-        container.scrollTo({ left: t.offsetLeft - container.offsetLeft, behavior: 'smooth' });
+        if (instant) container.scrollLeft = t.offsetLeft - container.offsetLeft;
+        else container.scrollTo({ left: t.offsetLeft - container.offsetLeft, behavior: 'smooth' });
         clearTimeout(programmaticScrollTimer);
-        programmaticScrollTimer = setTimeout(() => { isProgrammaticScroll = false; }, 500);
+        programmaticScrollTimer = setTimeout(() => { isProgrammaticScroll = false; }, instant ? 120 : 500);
         return true;
     }
     return false;
@@ -818,31 +819,7 @@ function renderFullscreenCalendar() {
 
         b.className = cls.join(' ');
         b.textContent = d;
-        b.onclick = () => {
-            if (journalSearchQuery) clearJournalSearch();
-            if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); renderRightCards(); }
-            activeDateKey = dk;
-            if (!dateList.includes(dk)) { dateList.push(dk); dateList.sort(); }
-            renderFullscreenCalendar();
-            renderMiniCalendar();
-
-            const c = document.getElementById('journalCarouselContainer');
-            if (calendarScope === 'day') {
-                if (c.querySelector(`[data-key="${dk}"]`)) smoothScrollToKey(dk);
-                else { renderDayCarousel(); smoothScrollToKey(dk); }
-            } else if (calendarScope === 'photo') { 
-                smoothScrollToPhotoDate(dk);
-            } else if (calendarScope === 'week') {
-                const { monStr } = getWeekRangeFromDate(dk);
-                if (c.querySelector(`[data-key="${monStr}"]`)) smoothScrollToKey(monStr);
-                else renderWeekCarousel();
-            } else if (calendarScope === 'month') {
-                const mPre = dk.substring(0, 7);
-                if (c.querySelector(`[data-key="${mPre}"]`)) smoothScrollToKey(mPre);
-                else renderMonthCarousel();
-            }
-            closeModal('fullscreenCalendarModal');
-        };
+        b.onclick = () => jumpToDateFromPopup(dk);
         g.appendChild(b);
     }
 
@@ -875,9 +852,48 @@ function setCalendarScopeFromPopup(scope) {
 }
 
 function jumpToCurrentScopePeriodFromPopup() {
-    jumpToCurrentScopePeriod();
-    renderFullscreenCalendar();
+    const now = new Date(); miniCalYear = now.getFullYear(); miniCalMonth = now.getMonth();
+    jumpToDateFromPopup(getTodayKey());
+}
+
+// カレンダーのポップアップから日付を選んだとき：カードを流すスクロールはせず、その日へそのまま切り替える
+// ※以前は途中のカードを高速で流して移動していた（遠い日ほど長く流れる）。ポップアップを閉じ、軽くフェードして表示を差し替える。
+function jumpToDateFromPopup(dk) {
     closeModal('fullscreenCalendarModal');
+    const c = document.getElementById('journalCarouselContainer');
+    c.style.transition = 'none';
+    c.style.opacity = '0';
+
+    if (journalSearchQuery) { journalSearchQuery = ''; ['journalSearchInput', 'fsJournalSearchInput'].forEach(i => { const el = document.getElementById(i); if (el) el.value = ''; }); ['journalSearchClearBtn', 'fsJournalSearchClearBtn'].forEach(i => { const el = document.getElementById(i); if (el) el.classList.remove('active'); }); }
+    const wasOverlay = showPinnedList || !c.querySelector('.card-carousel-panel[data-key]');
+    if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); }
+    activeDateKey = dk; lastJournalDateKey = dk;
+    if (!dateList.includes(dk)) { dateList.push(dk); dateList.sort(); }
+
+    if (wasOverlay) {
+        if (calendarScope === 'photo') lastPhotoPanelKey = null;
+        renderRightCards();
+    }
+    if (calendarScope === 'day') {
+        if (c.querySelector(`[data-key="${dk}"]`)) instantScrollToKey(dk); else renderDayCarousel();
+    } else if (calendarScope === 'photo') {
+        smoothScrollToPhotoDate(dk, true);
+    } else if (calendarScope === 'week') {
+        const { monStr } = getWeekRangeFromDate(dk);
+        const panel = c.querySelector(`[data-key="${monStr}"]`);
+        if (panel) { instantScrollToKey(monStr); scrollToTimelineDateInPanel(panel, dk, false); } else renderWeekCarousel();
+    } else if (calendarScope === 'month') {
+        const pre = dk.substring(0, 7);
+        const panel = c.querySelector(`[data-key="${pre}"]`);
+        if (panel) { instantScrollToKey(pre); scrollToTimelineDateInPanel(panel, dk, false); } else renderMonthCarousel();
+    }
+    renderMiniCalendar();
+    renderFullscreenCalendar();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        c.style.transition = 'opacity 0.22s ease';
+        c.style.opacity = '';
+        setTimeout(() => { c.style.transition = ''; }, 260);
+    }));
 }
 
 function handleFsJournalSearchInput(e) {
@@ -929,25 +945,22 @@ function renderFullscreenLinkedNotes() {
         return;
     }
 
-    const chev = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
     let html = '';
     linkedNotes.forEach(ln => {
         const title = ln.title || '無題のノート';
-        const text = stripHtml(sanitizeNoteHtml(ln.content || '')).replace(/\s+/g, ' ').trim();
-        const initial = Array.from(title.trim())[0] || '📄';
-        const unlink = window.IS_READONLY_MODE ? '' : `<button type="button" class="ios-link-unlink" onclick="event.stopPropagation(); unlinkNotebook('${currentNote.id}', '${ln.id}', event)" title="このノートとのリンクを解除">解除</button>`;
+        const preview = (ln.content && ln.content.trim()) ? buildNotebookPreviewHtml(ln.content) : '<span style="opacity:0.4;">(空のノート)</span>';
+        const unlink = window.IS_READONLY_MODE ? '<span></span>' : `<button type="button" class="nb-unlink-btn ios-card-unlink" onclick="event.stopPropagation(); unlinkNotebook('${currentNote.id}', '${ln.id}', event)" title="このノートとのリンクを解除">✕ 解除</button>`;
         html += `
-            <div class="ios-link-row" onclick="openNotebookLinkedFromPopup('${ln.id}')">
-                <div class="ios-link-icon">${escapeHtml(initial)}</div>
-                <div class="ios-link-main">
-                    <div class="ios-link-title">${escapeHtml(title)}</div>
-                    <div class="ios-link-preview">${text ? escapeHtml(text.slice(0, 160)) : '<span style="opacity:.6;">（空のノート）</span>'}</div>
-                    <div class="ios-link-meta">${buildStatusBadgeHtml(ln.status || 'archive', ln.id)}${buildNotebookCategoryBadge(ln)}</div>
+            <div class="notebook-grid-card ios-link-card" onclick="openNotebookLinkedFromPopup('${ln.id}')">
+                <h3 class="notebook-grid-title">${escapeHtml(title)}</h3>
+                <div class="notebook-grid-preview">${preview}</div>
+                <div class="notebook-grid-meta">
+                    ${unlink}
+                    <div style="display: flex; gap: 4px; align-items: center;">${buildStatusBadgeHtml(ln.status || 'archive', ln.id)}${buildNotebookCategoryBadge(ln)}</div>
                 </div>
-                <div class="ios-link-side">${unlink}<span class="ios-link-chev">${chev}</span></div>
             </div>`;
     });
-    container.className = 'ios-link-list';
+    container.className = 'ios-link-cards';
     container.innerHTML = html;
 }
 
