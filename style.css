@@ -1917,3 +1917,19 @@ body .ios-link-cards .ios-link-card { width: 100%; aspect-ratio: 1 / 0.82 !impor
 .ios-link-cards .ios-link-card .notebook-grid-preview { font-size: 13.5px; }
 .ios-link-cards .ios-link-card .notebook-grid-preview::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(transparent, var(--item-bg)); }
 .ios-card-unlink { opacity: 0.85; color: var(--reset-btn-bg); }
+
+/* ==========================================
+   集中モード（PC）：左右のサイドバーを隠し、記録・ノートを中央に大きく
+   ========================================== */
+body.focus-mode #calendarSidebar { display: none !important; }
+body.focus-mode .sidebar-reopen-btn { display: none !important; }
+body.focus-mode .connected-right-sidebar { display: none !important; }
+body.focus-mode #journalCarouselContainer:not(.grid-mode-active) .card-carousel-panel > .main-display { width: 100%; max-width: 860px; margin-left: auto; margin-right: auto; }
+body.focus-mode .connected-view-container { max-width: 980px; margin-left: auto; margin-right: auto; width: 100%; }
+#btnFocus.is-on { color: var(--accent-color); font-weight: 700; }
+
+/* 設定アイコンの点：同期に問題があるときだけ表示 */
+.bar-icon-with-dot { position: relative; display: inline-block; }
+.sync-alert-dot { position: absolute; top: -2px; right: -5px; width: 8px; height: 8px; border-radius: 50%; background: transparent; box-shadow: 0 0 0 2px var(--card-bg); display: none; }
+.sync-alert-dot.warn { display: block; background: #f39c12; }
+.sync-alert-dot.error { display: block; background: #e74c3c; }

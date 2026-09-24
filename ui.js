@@ -540,6 +540,7 @@ function handleCalendarButtonClick() {
 }
 
 function toggleLeftSidebar(isOpen) {
+    if (isOpen && typeof focusMode !== 'undefined' && focusMode) { focusMode = false; _focusPrev = null; document.body.classList.remove('focus-mode'); updateFocusButtonUI(); }
     if (isOpen) {
         sidebarMode = 'cal';
         const p = (activeDateKey || getTodayKey()).split('-');
@@ -552,6 +553,7 @@ function toggleLeftSidebar(isOpen) {
 }
 
 function toggleRightSidebar(isOpen) {
+    if (isOpen && typeof focusMode !== 'undefined' && focusMode) { focusMode = false; _focusPrev = null; document.body.classList.remove('focus-mode'); updateFocusButtonUI(); }
     isRightSidebarOpen = isOpen;
     const viewContainer = document.querySelector('.connected-view-container');
     if (viewContainer) {
@@ -3132,3 +3134,47 @@ function fitBarLabels() {
     });
 }
 window.addEventListener('resize', () => fitBarLabels());
+
+
+// ==========================================
+// 集中モード（PC）
+// ==========================================
+// 左右のサイドバーを隠して、記録・ノートを画面の中央に大きく表示する。もう一度押すか Esc で元に戻る。
+let focusMode = false;
+let _focusPrev = null;
+function updateFocusButtonUI() {
+    const b = document.getElementById('btnFocus');
+    if (!b) return;
+    b.classList.toggle('is-on', focusMode);
+    const label = document.getElementById('btnFocusLabel');
+    if (label) label.textContent = focusMode ? '戻す' : '集中';
+    b.title = focusMode ? '集中モードを終える（Esc）' : '集中モード（左右のサイドバーを隠す）  Esc で戻る';
+    if (typeof fitBarLabels === 'function') fitBarLabels();
+}
+function setFocusMode(on) {
+    if (on === focusMode) return;
+    if (on) {
+        _focusPrev = { left: sidebarMode, right: (typeof isRightSidebarOpen !== 'undefined') ? isRightSidebarOpen : true };
+        focusMode = true;
+        document.body.classList.add('focus-mode');
+        sidebarMode = 'none';
+        updateSidebars();
+        if (typeof isRightSidebarOpen !== 'undefined' && isRightSidebarOpen) toggleRightSidebar(false);
+    } else {
+        focusMode = false;
+        document.body.classList.remove('focus-mode');
+        const prev = _focusPrev || { left: 'cal', right: true };
+        _focusPrev = null;
+        sidebarMode = prev.left;
+        updateSidebars();
+        if (typeof isRightSidebarOpen !== 'undefined' && isRightSidebarOpen !== prev.right) toggleRightSidebar(prev.right);
+    }
+    updateFocusButtonUI();
+    updateSidebarReopenButtons();
+}
+function toggleFocusMode() { setFocusMode(!focusMode); }
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !focusMode) return;
+    if (document.querySelector('.modal-overlay.active, .lightbox-overlay.active')) return; // 画面（モーダル）を閉じる Esc を優先
+    setFocusMode(false);
+});

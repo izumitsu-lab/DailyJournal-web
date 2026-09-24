@@ -126,13 +126,20 @@ function _reportSyncError(e) {
 // ==========================================
 // 1. 同期状態の表示
 // ==========================================
+// 同期に問題があるときだけ、下のメニューの設定アイコンに点を付ける（オレンジ：要注意、赤：エラー）
+function _setSyncAlertDot(level, text) {
+    const dot = document.getElementById('syncAlertDot');
+    if (dot) { dot.classList.toggle('warn', level === 'warn'); dot.classList.toggle('error', level === 'error'); }
+    const btn = document.getElementById('btnSettings');
+    if (btn) btn.title = level ? `設定（同期：${text}）` : '設定';
+}
+
 function updateSyncStatusUI() {
     const icon = document.getElementById('btnSyncPullIcon');
     const statusEl = document.getElementById('supabaseSyncStatus');
-    if (!icon && !statusEl) return;
 
     const configured = !!localStorage.getItem('daily_journal_supabase_url');
-    if (!configured) return;
+    if (!configured) { _setSyncAlertDot(null); return; }
 
     let text, iconChar, color;
     const pending = getPendingCount();
@@ -162,6 +169,11 @@ function updateSyncStatusUI() {
 
     if (icon) icon.textContent = iconChar;
     if (statusEl) { statusEl.textContent = text; statusEl.style.color = color; }
+    // 点を付けるのは、放っておくと困る状態だけ（未ログイン・同期中・一時的な送信待ちでは付けない）
+    let level = null;
+    if (supabaseUser && (_schemaState === 'outdated' || _lastSyncError)) level = 'error';
+    else if (supabaseUser && !isOnline && pending > 0) level = 'warn';
+    _setSyncAlertDot(level, text);
 }
 
 // ==========================================

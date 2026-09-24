@@ -17,24 +17,24 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.24-4">
+    <link rel="stylesheet" href="style.css?v=2026.09.24-5">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.24-4';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.24-5';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
         /* デフォルト (PCモード) : カレンダー非表示、更新表示 */
         #btnCalendarLink { display: none !important; }
-        #btnSyncPull { display: flex; } 
+        #btnFocus { display: flex; } 
 
         /* スマホモード時 : カレンダー表示、更新非表示 */
         body.is-mobile-mode #btnCalendarLink { display: flex !important; }
-        body.is-mobile-mode #btnSyncPull { display: none !important; }
+        body.is-mobile-mode #btnFocus { display: none !important; }
 
         /* 画面幅による自動判定時 */
         @media (max-width: 768px) {
             body:not(.is-desktop-mode) #btnCalendarLink { display: flex !important; }
-            body:not(.is-desktop-mode) #btnSyncPull { display: none !important; }
+            body:not(.is-desktop-mode) #btnFocus { display: none !important; }
         }
     </style>
 </head>
@@ -167,14 +167,15 @@
         </button>
 
         <!-- 6-alt. 更新ボタン（PC時のみ表示） -->
-        <button class="bar-btn" id="btnSyncPull" onclick="forceSyncNow()">
-            <span class="bar-btn-icon" id="btnSyncPullIcon">🔄</span>
-            <span id="btnSyncPullLabel">更新</span>
+        <!-- 6-alt. 集中モード（PC時のみ表示）：左右のサイドバーを隠して中央に大きく表示 -->
+        <button class="bar-btn" id="btnFocus" onclick="toggleFocusMode()" title="集中モード（左右のサイドバーを隠す）  Esc で戻る">
+            <span class="bar-btn-icon" id="btnFocusIcon">🧘</span>
+            <span id="btnFocusLabel">集中</span>
         </button>
 
         <!-- 7. 設定 -->
-        <button class="bar-btn" onclick="openModal('settingsModal')">
-            <span class="bar-btn-icon">⚙️</span>
+        <button class="bar-btn" id="btnSettings" onclick="openModal('settingsModal')">
+            <span class="bar-btn-icon bar-icon-with-dot">⚙️<span class="sync-alert-dot" id="syncAlertDot"></span></span>
             <span>設定</span>
         </button>
     </div>
@@ -1067,14 +1068,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.24-4"></script>
-    <script src="main.js?v=2026.09.24-4"></script>
-    <script src="calendar.js?v=2026.09.24-4"></script>
-    <script src="notebooks.js?v=2026.09.24-4"></script>
-    <script src="ui.js?v=2026.09.24-4"></script>
+    <script src="purify.min.js?v=2026.09.24-5"></script>
+    <script src="main.js?v=2026.09.24-5"></script>
+    <script src="calendar.js?v=2026.09.24-5"></script>
+    <script src="notebooks.js?v=2026.09.24-5"></script>
+    <script src="ui.js?v=2026.09.24-5"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.24-4"></script>
+    <script src="supabase-sync.js?v=2026.09.24-5"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 
