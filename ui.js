@@ -191,7 +191,7 @@ function formatKB(bytes) { return bytes >= 1024 * 1024 ? (bytes / 1048576).toFix
 // 設定画面の値は「既定」。投稿画面ではその投稿に追加する写真だけ画質を変えられる（画面を開き直すと既定に戻る）。
 // 写真を選んだ後に画質を変えても反映できるよう、投稿が終わるまで元の写真ファイルを覚えておき、作り直す。
 // ※元のファイルは端末上のファイルへの参照なので、覚えておいてもメモリはほとんど使わない。保存済みの写真は対象外。
-const _modalPhotoQuality = { add: 'standard', edit: 'standard' };
+const _modalPhotoQuality = { add: photoQuality, edit: photoQuality }; // 投稿画面の画質（開くたびに設定の既定へ戻す）
 const _photoSourceFiles = { add: new Map(), edit: new Map() }; // 縮小後の dataURL -> 元のファイル
 const _photoJobs = { add: Promise.resolve(), edit: Promise.resolve() };
 const _photoBusy = { add: 0, edit: 0 };
@@ -686,10 +686,11 @@ function updateScopeButtonsUI() {
     const bWeek = document.getElementById('btnScopeWeek');
     const bMonth = document.getElementById('btnScopeMonth');
     const bPhoto = document.getElementById('btnScopePhoto');
-    if (bDay) bDay.classList.toggle('active', calendarScope === 'day');
-    if (bWeek) bWeek.classList.toggle('active', calendarScope === 'week');
-    if (bMonth) bMonth.classList.toggle('active', calendarScope === 'month');
-    if (bPhoto) bPhoto.classList.toggle('active', calendarScope === 'photo');
+    const bPins = document.getElementById('btnScopePins');
+    const pinOn = !!showPinnedList && calendarScope !== 'notebooks';
+    // サイドバーの一覧は「表示ビューの切り替え」と同じ見た目（選択中は selected）
+    [[bDay, !pinOn && calendarScope === 'day'], [bWeek, !pinOn && calendarScope === 'week'], [bMonth, !pinOn && calendarScope === 'month'], [bPhoto, !pinOn && calendarScope === 'photo'], [bPins, pinOn]]
+        .forEach(([el, on]) => { if (el) { el.classList.toggle('active', on); el.classList.toggle('selected', on); el.setAttribute('aria-current', on ? 'true' : 'false'); } });
 
     const isNbEnabled = isNotebookEnabledForCurrentFilter();
     const sbNb = document.getElementById('btnSidebarNotebook');
@@ -1431,6 +1432,7 @@ async function saveNewLog() {
     await saveJournalData();
     
     if (!dateList.includes(dStr)) { dateList.push(dStr); dateList.sort(); }
+    clearDraft('add'); _setDraftBar('add', '');
     closeModal('addModal');
     triggerSmoothViewSwitch(() => {
         if (!['day', 'photo'].includes(calendarScope)) { calendarScope = 'day'; updateScopeButtonsUI(); updateJumpButtonLabel(); }
@@ -1477,6 +1479,7 @@ async function saveEditedLog() {
     
     await saveJournalData();
     
+    clearDraft('edit', id); _setDraftBar('edit', '');
     closeModal('editModal');
     if (movedTo && calendarScope !== 'notebooks') {
         activeDateKey = movedTo; lastJournalDateKey = movedTo;
@@ -1495,6 +1498,7 @@ async function deleteFromEditModal() {
         
         await saveJournalData();
         
+        clearDraft('edit', id); _setDraftBar('edit', '');
         closeModal('editModal'); 
         triggerSmoothViewSwitch(() => { 
             renderRightCards(); 
@@ -1806,6 +1810,7 @@ function openSearchModal() {
     
     globalSearchTab = 'all';
     globalSearchOperator = 'AND';
+    resetSearchRefine();
     updateSearchFilterTabsUI();
     updateSearchOperatorUI();
     renderGlobalSearchResults("");
@@ -1899,10 +1904,11 @@ function renderGlobalSearchResults(query) {
     if (!container) return;
     const { tokens, operator } = parseSearchQuery(query);
 
-    if (tokens.length === 0) {
+    const rf = _searchRefineState();
+    if (tokens.length === 0 && !rf.any) {
         container.innerHTML = `
             <div style="text-align: center; color: var(--text-secondary); font-size: 13.5px; padding: 40px 10px;">
-                キーワードを入力して検索を開始してください
+                キーワードを入力して検索を開始してください<br><span style="font-size: 12px; opacity: 0.8;">写真あり・しおり・期間だけで探すこともできます</span>
             </div>
         `;
         if (countTotalBadge) countTotalBadge.textContent = "0件";
@@ -1914,7 +1920,11 @@ function renderGlobalSearchResults(query) {
 
     const journalMatches = [];
     Object.keys(journalData).sort().reverse().forEach(d => {
+        if (!rf.dateOk(d)) return;
         (journalData[d] || []).forEach((l, idx) => {
+            const nImg = Array.isArray(l.images) ? l.images.length : (l.image ? 1 : 0);
+            if (rf.photo && !nImg) return;
+            if (rf.pin && !l.pinned) return;
             const sT = l.slackType || (l.isSlack ? 'incoming' : null);
             const textContent = `${l.text || ''} ${l.category || ''} ${getLogCategoryType(l.category || '')} ${sT === 'incoming' ? '受信 slack 相手' : sT === 'outgoing' ? '送信 slack 自分' : ''}`;
 
@@ -1926,7 +1936,9 @@ function renderGlobalSearchResults(query) {
                     text: l.text,
                     category: l.category || 'ライフログ',
                     slackType: sT,
-                    index: l.id
+                    index: l.id,
+                    photos: nImg,
+                    pinned: !!l.pinned
                 });
             }
         });
@@ -1934,6 +1946,9 @@ function renderGlobalSearchResults(query) {
 
     const notebookMatches = [];
     notebookData.filter(n => n.status !== 'trash').forEach(n => {
+        if (rf.pin) return; // しおりは記録だけの機能
+        if (rf.photo && !/<img\b/i.test(n.content || '')) return;
+        if (!rf.dateOk(String(n.updatedAt || n.createdAt || '').slice(0, 10))) return;
         const plainContent = stripHtml(n.content || '');
         const textContent = `${n.title || ''} ${plainContent} ${n.category || ''} ${n.status || ''}`;
 
@@ -1975,13 +1990,16 @@ function renderGlobalSearchResults(query) {
             <div class="empty-state" style="padding: 36px 10px;">
                 <span style="font-size: 28px;">🔍</span>
                 <span style="font-size: 14.5px; font-weight: 700; margin-top: 6px;">一致する結果は見つかりませんでした</span>
-                <span style="font-size: 12px; color: var(--text-secondary);">「${operator}」条件で検索しています。キーワードを変更するか、OR検索をお試しください</span>
+                <span style="font-size: 12px; color: var(--text-secondary);">${rf.any ? '絞り込み（' + rf.label + '）を外すと見つかるかもしれません' : `「${operator}」条件で検索しています。キーワードを変更するか、OR検索をお試しください`}</span>
             </div>
         `;
         return;
     }
 
     let html = "";
+    const SEARCH_MAX = 300; // 一度に並べる件数の上限（大量の結果で重くならないように）
+    const more = displayedItems.length - SEARCH_MAX;
+    if (more > 0) displayedItems = displayedItems.slice(0, SEARCH_MAX);
     displayedItems.forEach(item => {
         if (item.type === 'journal') {
             const catClass = getCategoryTypeClass(item.category);
@@ -1992,11 +2010,12 @@ function renderGlobalSearchResults(query) {
             html += `
                 <div class="search-result-item" onclick="jumpFromGlobalSearchToDay('${item.date}', '${item.index}')">
                     <div class="search-result-header">
-                        <div style="display:flex; align-items:center; gap:6px;">
+                        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
                             <span class="search-type-pill journal">JOURNAL</span>
-                            <span>📅 ${item.date} (${item.time})</span>
+                            <span style="white-space:nowrap;">📅 ${item.date} (${item.time})</span>
                         </div>
-                        <div style="display:flex; align-items:center; gap:4px;">
+                        <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap; justify-content:flex-end; min-width:0;">
+                            ${item.pinned ? '<span class="search-mini-mark pin" title="しおり">🔖</span>' : ''}${item.photos ? `<span class="search-mini-mark" title="写真">📷${item.photos > 1 ? item.photos : ''}</span>` : ''}
                             ${sBadge}
                             <span class="log-category-badge ${catClass}" style="font-size:10px;padding:1px 6px;">${escapeHtml(item.category)}</span>
                         </div>
@@ -2029,7 +2048,59 @@ function renderGlobalSearchResults(query) {
         }
     });
 
+    if (more > 0) html += `<div class="search-more-note">ほかに ${more} 件あります。キーワードや期間で絞り込んでください</div>`;
     container.innerHTML = html;
+}
+
+// ---- 検索の絞り込み（写真あり・しおり・期間） ----
+let searchRefine = { photo: false, pin: false, period: 'all', from: '', to: '' };
+function resetSearchRefine() {
+    searchRefine = { photo: false, pin: false, period: 'all', from: '', to: '' };
+    const sel = document.getElementById('searchRefinePeriod'); if (sel) sel.value = 'all';
+    const f = document.getElementById('searchRangeFrom'), t = document.getElementById('searchRangeTo');
+    if (f) f.value = ''; if (t) t.value = '';
+    updateSearchRefineUI();
+}
+function _searchRefineState() {
+    const r = searchRefine;
+    let from = '', to = '', plabel = '';
+    if (r.period === 'custom') { from = r.from || ''; to = r.to || ''; if (from && to && from > to) [from, to] = [to, from]; plabel = (from || to) ? `${from ? from.slice(5).replace('-', '/') : ''}〜${to ? to.slice(5).replace('-', '/') : ''}` : ''; }
+    else if (r.period !== 'all') {
+        const d = new Date(); d.setDate(d.getDate() - (parseInt(r.period, 10) - 1));
+        from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        plabel = { '7': '1週間', '30': '1か月', '90': '3か月', '365': '1年' }[r.period] || '';
+    }
+    const parts = [];
+    if (r.photo) parts.push('写真あり'); if (r.pin) parts.push('しおり'); if (plabel) parts.push(plabel);
+    return {
+        photo: r.photo, pin: r.pin, any: parts.length > 0, label: parts.join('・'),
+        dateOk: (dk) => (!from || !dk || dk >= from) && (!to || !dk || dk <= to)
+    };
+}
+function updateSearchRefineUI() {
+    const r = searchRefine;
+    const ph = document.getElementById('searchRefine_photo'), pn = document.getElementById('searchRefine_pin');
+    if (ph) { ph.classList.toggle('active', r.photo); ph.setAttribute('aria-pressed', r.photo ? 'true' : 'false'); }
+    if (pn) { pn.classList.toggle('active', r.pin); pn.setAttribute('aria-pressed', r.pin ? 'true' : 'false'); }
+    const wrap = document.getElementById('searchRefine_periodWrap'), lab = document.getElementById('searchRefinePeriodLabel');
+    const names = { all: '期間', '7': '1週間', '30': '1か月', '90': '3か月', '365': '1年', custom: '指定' };
+    if (lab) lab.textContent = names[r.period] || '期間';
+    if (wrap) wrap.classList.toggle('active', r.period !== 'all');
+    const row = document.getElementById('searchRangeRow'); if (row) row.style.display = r.period === 'custom' ? '' : 'none';
+}
+function _rerenderSearch() { const i = document.getElementById('searchInput'); renderGlobalSearchResults(i ? i.value : ''); }
+function toggleSearchRefine(k) { searchRefine[k] = !searchRefine[k]; updateSearchRefineUI(); _rerenderSearch(); }
+function changeSearchPeriod(v) {
+    searchRefine.period = v;
+    if (v === 'custom' && !searchRefine.from && !searchRefine.to) {
+        const t = document.getElementById('searchRangeTo'); if (t) { t.value = getTodayKey(); searchRefine.to = t.value; }
+    }
+    updateSearchRefineUI(); _rerenderSearch();
+}
+function changeSearchRange() {
+    searchRefine.from = document.getElementById('searchRangeFrom').value || '';
+    searchRefine.to = document.getElementById('searchRangeTo').value || '';
+    _rerenderSearch();
 }
 
 function jumpFromGlobalSearchToDay(dateStr, targetLogIndex = null) {
@@ -3178,3 +3249,271 @@ document.addEventListener('keydown', e => {
     if (document.querySelector('.modal-overlay.active, .lightbox-overlay.active')) return; // 画面（モーダル）を閉じる Esc を優先
     setFocusMode(false);
 });
+
+// ==========================================
+// 書きかけの自動保存（下書き）
+// ==========================================
+// 追記・編集画面、ノートの編集中の内容を、この端末の中だけにこまめに残す。
+// アプリが落ちたり、画面の外をタップして閉じてしまっても、次に開いたときに戻せる。
+// 保存して閉じた・キャンセルを押したときは消す。クラウドには送らない。
+const DRAFT_KEY = 'drafts';
+const DRAFT_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+let _drafts = { add: null, edit: null, notes: {} };
+let _draftsLoaded = false;
+let _draftTimer = null;
+let _draftWrite = Promise.resolve();
+const _noteDirty = new Set();
+
+async function initDrafts() {
+    wireDrafts();
+    let d = null;
+    try { d = await getDBData(DRAFT_KEY); } catch (e) {}
+    const now = Date.now();
+    const fresh = x => x && x.savedAt && (now - Date.parse(x.savedAt)) < DRAFT_MAX_AGE_MS;
+    _drafts = { add: null, edit: null, notes: {} };
+    if (d && typeof d === 'object') {
+        if (fresh(d.add)) _drafts.add = d.add;
+        if (fresh(d.edit) && findLogById(d.edit.dateStr, d.edit.id)) _drafts.edit = d.edit;
+        if (d.notes && typeof d.notes === 'object') for (const id of Object.keys(d.notes)) {
+            if (fresh(d.notes[id]) && notebookData.some(n => n.id === id)) _drafts.notes[id] = d.notes[id];
+        }
+    }
+    _draftsLoaded = true;
+    _writeDrafts();
+    showDraftNotices();
+}
+
+function _writeDrafts() {
+    if (typeof _tabInactive !== 'undefined' && _tabInactive) return _draftWrite;
+    const snap = JSON.parse(JSON.stringify(_drafts));
+    _draftWrite = _draftWrite.then(() => setDBData(DRAFT_KEY, snap)).catch(e => console.warn('書きかけの保存に失敗しました', e));
+    return _draftWrite;
+}
+
+function scheduleDraftSave(delay = 700) {
+    if (!_draftsLoaded) return;
+    clearTimeout(_draftTimer);
+    _draftTimer = setTimeout(() => { flushDrafts(); }, delay);
+}
+
+async function _imagesToRefs(list) {
+    const out = [];
+    for (const s of list) {
+        if (isDataImage(s)) {
+            try { const h = await hashImage(s); await storeImage(h, s); out.push(IDB_IMG_PREFIX + h); } catch (e) { /* 取れなかった写真は下書きに入れない */ }
+        } else out.push(s);
+    }
+    return out;
+}
+async function _htmlImagesToRefs(html) {
+    const found = Array.from(new Set(html.match(DATA_URI_RE) || []));
+    if (!found.length) return html;
+    const map = new Map();
+    for (const s of found) { try { const h = await hashImage(s); await storeImage(h, s); map.set(s, IDB_IMG_PREFIX + h); } catch (e) {} }
+    return html.replace(DATA_URI_RE, m => map.get(m) || m);
+}
+async function _htmlRefsToImages(html) {
+    const hashes = new Set(); let m; const re = new RegExp(IDB_REF_RE.source, 'g');
+    while ((m = re.exec(html))) hashes.add(m[1]);
+    const map = new Map();
+    for (const h of hashes) { const d = await getImageData(h); if (d) { map.set(h, d); _hashByData.set(d, h); } }
+    return html.replace(IDB_REF_RE, (x, h) => map.get(h) || x);
+}
+
+// 今の画面の状態から下書きを作り直して保存する
+async function flushDrafts() {
+    if (!_draftsLoaded) return;
+    clearTimeout(_draftTimer);
+    const now = new Date().toISOString();
+    const jobs = [];
+
+    const addOpen = document.getElementById('addModal')?.classList.contains('active');
+    if (addOpen) {
+        const text = document.getElementById('journalInputText').value;
+        const photos = [...currentAddPhotos];
+        if (!text.trim() && !photos.length) _drafts.add = null;
+        else {
+            const snap = { text, category: selectedAddCategory, msgType: currentAddMsgType, slot: _addSlot ? { ..._addSlot } : null, photos: [], savedAt: now };
+            _drafts.add = snap;
+            jobs.push(_imagesToRefs(photos).then(r => { if (_drafts.add === snap) snap.photos = r; }));
+        }
+    }
+
+    const editOpen = document.getElementById('editModal')?.classList.contains('active');
+    if (editOpen && currentEditTarget && currentEditTarget.id) {
+        const { dateStr, id } = currentEditTarget;
+        const log = findLogById(dateStr, id);
+        const text = document.getElementById('editInputText').value;
+        const changed = log && (text !== (log.text || '') || selectedEditCategory !== (log.category || 'ライフログ'));
+        if (changed) _drafts.edit = { dateStr, id, text, category: selectedEditCategory, msgType: currentEditMsgType, savedAt: now };
+        else if (_drafts.edit && _drafts.edit.id === id) _drafts.edit = null;
+    }
+
+    for (const id of Array.from(_noteDirty)) {
+        const area = document.getElementById(`nb_content_view_${id}`);
+        if (!area || !area.classList.contains('is-editing')) continue;
+        const titleEl = document.getElementById(`nb_title_edit_${id}`);
+        const note = notebookData.find(n => n.id === id);
+        const snap = { title: titleEl ? titleEl.value : (note ? note.title : ''), content: '', baseUpdatedAt: note ? (note.updatedAt || '') : '', savedAt: now };
+        _drafts.notes[id] = snap;
+        const html = area.innerHTML;
+        jobs.push(_htmlImagesToRefs(html).then(h => { if (_drafts.notes[id] === snap) snap.content = h; }));
+    }
+
+    await Promise.all(jobs);
+    return _writeDrafts();
+}
+
+function clearDraft(kind, id) {
+    clearTimeout(_draftTimer);
+    if (kind === 'add') _drafts.add = null;
+    else if (kind === 'edit') { if (!id || (_drafts.edit && _drafts.edit.id === id)) _drafts.edit = null; }
+    else if (kind === 'note') { delete _drafts.notes[id]; _noteDirty.delete(id); }
+    if (_draftsLoaded) _writeDrafts();
+}
+
+function _fmtDraftTime(iso) {
+    const d = new Date(iso); if (isNaN(d)) return '';
+    const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const today = new Date(); const same = d.toDateString() === today.toDateString();
+    return same ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+function _setDraftBar(m, text) {
+    const bar = document.getElementById(m === 'add' ? 'addDraftBar' : 'editDraftBar');
+    if (!bar) return;
+    if (!text) { bar.style.display = 'none'; return; }
+    bar.querySelector('.draft-bar-text').textContent = text;
+    bar.style.display = '';
+}
+
+// 追記・編集画面を開いたときに書きかけを戻す
+function restoreModalDraft(m) {
+    _setDraftBar(m, '');
+    if (m === 'add') {
+        const d = _drafts.add; if (!d) return;
+        document.getElementById('journalInputText').value = d.text || '';
+        if (d.category && categories.some(c => c.name === d.category)) {
+            selectedAddCategory = d.category;
+            renderModalCategoryChips('add', selectedAddCategory);
+            updateMsgTypeVisibility('add', selectedAddCategory);
+        }
+        setMessageType('add', d.msgType || 'normal');
+        if (d.slot && d.slot.date) { _addSlot = { ...d.slot }; refreshAddSlotUI(); }
+        currentAddPhotos = Array.isArray(d.photos) ? [...d.photos] : [];
+        renderPhotoPreviews('add');
+        _setDraftBar('add', `書きかけを戻しました（${_fmtDraftTime(d.savedAt)}）`);
+    } else {
+        const d = _drafts.edit;
+        if (!d || !currentEditTarget || d.id !== currentEditTarget.id) return;
+        document.getElementById('editInputText').value = d.text || '';
+        if (d.category && categories.some(c => c.name === d.category)) {
+            selectedEditCategory = d.category;
+            renderModalCategoryChips('edit', selectedEditCategory);
+            updateMsgTypeVisibility('edit', selectedEditCategory);
+        }
+        setMessageType('edit', d.msgType || 'normal');
+        _setDraftBar('edit', `編集途中の内容を戻しました（${_fmtDraftTime(d.savedAt)}）`);
+    }
+}
+
+function discardModalDraft(m) {
+    if (m === 'add') {
+        clearDraft('add');
+        _addSlot = null; refreshAddSlotUI();
+        document.getElementById('journalInputText').value = '';
+        currentAddPhotos = []; resetModalPhotoQuality('add'); renderPhotoPreviews('add');
+        setMessageType('add', 'normal');
+    } else {
+        const t = currentEditTarget;
+        clearDraft('edit');
+        const log = t && findLogById(t.dateStr, t.id);
+        if (log) {
+            document.getElementById('editInputText').value = log.text || '';
+            selectedEditCategory = log.category || 'ライフログ';
+            renderModalCategoryChips('edit', selectedEditCategory);
+            updateMsgTypeVisibility('edit', selectedEditCategory);
+            setMessageType('edit', log.slackType || (log.isSlack ? 'incoming' : 'normal'));
+        }
+    }
+    _setDraftBar(m, '');
+}
+
+function cancelAddModal() { clearDraft('add'); _setDraftBar('add', ''); closeModal('addModal'); }
+function cancelEditModal() { clearDraft('edit'); _setDraftBar('edit', ''); closeModal('editModal'); }
+
+// 起動時：前回の書きかけが残っていれば、画面下に控えめに知らせる
+function showDraftNotices() {
+    const items = [];
+    if (_drafts.add) items.push({ key: 'add', label: '書きかけの記録があります', open: () => openAddModal(), discard: () => clearDraft('add') });
+    if (_drafts.edit) items.push({ key: 'edit', label: '編集途中の記録があります', open: () => { const d = _drafts.edit; if (d) openEditModal(d.dateStr, d.id); }, discard: () => clearDraft('edit') });
+    for (const id of Object.keys(_drafts.notes)) {
+        const n = notebookData.find(x => x.id === id);
+        const title = (_drafts.notes[id].title || (n && n.title) || '無題').slice(0, 18);
+        items.push({ key: 'note_' + id, label: `ノート「${title}」の書きかけがあります`, open: () => restoreNoteDraft(id), discard: () => clearDraft('note', id) });
+    }
+    if (!items.length) return;
+    let box = document.getElementById('appToastBox');
+    if (!box) { box = document.createElement('div'); box.id = 'appToastBox'; box.className = 'app-toast-box'; document.body.appendChild(box); }
+    items.slice(0, 3).forEach(it => {
+        const t = document.createElement('div');
+        t.className = 'app-toast draft-toast'; t.setAttribute('role', 'status'); t.dataset.draft = it.key;
+        t.innerHTML = `<span class="draft-toast-text"></span><span class="draft-toast-actions"><button type="button" class="draft-toast-btn ghost">破棄</button><button type="button" class="draft-toast-btn">開く</button></span>`;
+        t.querySelector('.draft-toast-text').textContent = it.label;
+        const [bDiscard, bOpen] = t.querySelectorAll('button');
+        bDiscard.onclick = (e) => { e.stopPropagation(); it.discard(); t.remove(); };
+        bOpen.onclick = (e) => { e.stopPropagation(); t.remove(); it.open(); };
+        t.onclick = null;
+        box.appendChild(t);
+        setTimeout(() => t.remove(), 20000); // 消えても下書きは残る（次回また知らせる）
+    });
+}
+
+async function restoreNoteDraft(id) {
+    const d = _drafts.notes[id]; if (!d) return;
+    if (!notebookData.some(n => n.id === id)) { clearDraft('note', id); return; }
+    const content = await _htmlRefsToImages(d.content || '');
+    if (typeof jumpFromGlobalSearchToNotebook === 'function') jumpFromGlobalSearchToNotebook(id);
+    let area = null;
+    for (let i = 0; i < 40 && !area; i++) { await new Promise(r => setTimeout(r, 60)); area = document.getElementById(`nb_content_view_${id}`); }
+    if (!area) { showToast('ノートを開けませんでした。もう一度お試しください。'); return; }
+    enableNotebookEdit(id);
+    const titleEl = document.getElementById(`nb_title_edit_${id}`);
+    if (titleEl && typeof d.title === 'string') titleEl.value = d.title;
+    if (content) area.innerHTML = content;
+    _noteDirty.add(id);
+    recordNotebookHistory(id, true);
+    showToast('書きかけを戻しました。確認して「保存」してください。キャンセルすると書きかけは消えます。', 6000);
+}
+
+// 既存の処理に「変わったら下書きを保存」を差し込む
+let _draftsWired = false;
+function wireDrafts() {
+    if (_draftsWired) return; _draftsWired = true;
+    const wrap = (name, after) => {
+        const orig = window[name];
+        if (typeof orig !== 'function') return;
+        window[name] = function (...args) { const r = orig.apply(this, args); try { after(...args); } catch (e) {} return r; };
+    };
+    wrap('renderPhotoPreviews', () => scheduleDraftSave());
+    wrap('renderModalCategoryChips', () => scheduleDraftSave());
+    wrap('setMessageType', () => scheduleDraftSave());
+    wrap('changeAddSlot', () => scheduleDraftSave());
+    wrap('openAddModal', () => restoreModalDraft('add'));
+    wrap('openEditModal', () => restoreModalDraft('edit'));
+    wrap('recordNotebookHistory', (id) => { if (id) { _noteDirty.add(id); scheduleDraftSave(1500); } });
+    wrap('saveNotebookEdit', (id) => clearDraft('note', id));
+    wrap('cancelNotebookEdit', (id) => clearDraft('note', id));
+    // 画面の外をタップして閉じたときは、その時点の内容を残す
+    const origOutside = window.outsideClose;
+    window.outsideClose = function (e, id) {
+        if ((id === 'addModal' || id === 'editModal') && e.target.id === id) flushDrafts();
+        return origOutside.apply(this, arguments);
+    };
+    document.addEventListener('input', (e) => {
+        const t = e.target;
+        if (t && (t.id === 'journalInputText' || t.id === 'editInputText')) scheduleDraftSave();
+    }, true);
+    // アプリを切り替えた・閉じたときはすぐ残す（iPhoneはこの後に終了されることがある）
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDrafts(); });
+    window.addEventListener('pagehide', () => { flushDrafts(); });
+}

@@ -18,7 +18,7 @@ window.addEventListener('orientationchange', () => {
 updateAppHeight();
 
 // アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
-const APP_VERSION = '2026.09.24-6';
+const APP_VERSION = '2026.09.24-10';
 function applyAppVersionLabel() {
     const el = document.getElementById('appVersionLabel');
     if (!el) return;
@@ -68,8 +68,17 @@ const PHOTO_QUALITY_PRESETS = {
     saver:    { label: '節約',   maxDimension: 1000, quality: 0.75, size: '約130KB' },
     minimum:  { label: '最小',   maxDimension: 800,  quality: 0.70, size: '約80KB' }
 };
-let photoQuality = PHOTO_QUALITY_PRESETS[localStorage.getItem('daily_journal_photo_quality')] ? localStorage.getItem('daily_journal_photo_quality') : 'standard';
-function getPhotoQualityPreset() { return PHOTO_QUALITY_PRESETS[photoQuality] || PHOTO_QUALITY_PRESETS.standard; }
+const DEFAULT_PHOTO_QUALITY = 'minimum';
+// 既定を「最小」に変更（2026.09.24-8）。それまでの端末も一度だけ「最小」に切り替える（その後に選び直した設定は尊重）
+(function migratePhotoQualityDefault() {
+    try {
+        if (localStorage.getItem('daily_journal_photo_default_v2')) return;
+        localStorage.setItem('daily_journal_photo_quality', DEFAULT_PHOTO_QUALITY);
+        localStorage.setItem('daily_journal_photo_default_v2', '1');
+    } catch (e) {}
+})();
+let photoQuality = PHOTO_QUALITY_PRESETS[localStorage.getItem('daily_journal_photo_quality')] ? localStorage.getItem('daily_journal_photo_quality') : DEFAULT_PHOTO_QUALITY;
+function getPhotoQualityPreset() { return PHOTO_QUALITY_PRESETS[photoQuality] || PHOTO_QUALITY_PRESETS[DEFAULT_PHOTO_QUALITY]; }
 function applyPhotoQualitySetting() {
     const sel = document.getElementById('photoQualitySelect');
     if (sel) sel.value = photoQuality;
@@ -85,7 +94,7 @@ function applyPhotoQualitySetting() {
     }
 }
 function changePhotoQuality(val) {
-    photoQuality = PHOTO_QUALITY_PRESETS[val] ? val : 'standard';
+    photoQuality = PHOTO_QUALITY_PRESETS[val] ? val : DEFAULT_PHOTO_QUALITY;
     localStorage.setItem('daily_journal_photo_quality', photoQuality);
     // 投稿画面を開いていなければ、次に開いたときの既定もこの値にする
     if (typeof resetModalPhotoQuality === 'function') {
@@ -145,10 +154,48 @@ const SAFE_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 let _dbPromise = null;
+// この開き方では端末に保存できない（Safari でファイルを直接開いた・プライベートブラウズ等）ときの代わり。
+// 画面は普段どおり使えるが、内容はこのページを開いている間だけメモリに置かれる。
+let storageUnavailable = false;
+function _memoryDB() {
+    const stores = new Map();
+    const store = n => { if (!stores.has(n)) stores.set(n, new Map()); return stores.get(n); };
+    const clone = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+    return {
+        transaction(names) {
+            const tx = { oncomplete: null, onerror: null, onabort: null, error: null };
+            let pending = 0, finished = false;
+            const done = () => { if (!finished && pending === 0) { finished = true; setTimeout(() => tx.oncomplete && tx.oncomplete(), 0); } };
+            const req = fn => { const r = { onsuccess: null, onerror: null, result: undefined }; pending++; Promise.resolve().then(() => { r.result = fn(); r.onsuccess && r.onsuccess({ target: r }); pending--; done(); }); return r; };
+            tx.objectStore = n => {
+                const m = store(n);
+                return {
+                    get: k => req(() => clone(m.get(k))),
+                    put: (v, k) => req(() => { m.set(k, clone(v)); return k; }),
+                    delete: k => req(() => { m.delete(k); }),
+                    getAllKeys: () => req(() => Array.from(m.keys()))
+                };
+            };
+            Promise.resolve().then(() => Promise.resolve()).then(done);
+            return tx;
+        },
+        close() {}
+    };
+}
+function _useMemoryDB(err) {
+    if (!storageUnavailable) {
+        storageUnavailable = true;
+        console.warn('この端末の保存領域が使えないため、一時的な保存で動作します', err);
+    }
+    return _memoryDB();
+}
 function initDB() {
     if (_dbPromise) return _dbPromise;
     _dbPromise = new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        if (storageUnavailable) { resolve(_memoryDB._inst || (_memoryDB._inst = _memoryDB())); return; }
+        let req;
+        try { req = indexedDB.open(DB_NAME, DB_VERSION); }
+        catch (e) { resolve(_memoryDB._inst = _useMemoryDB(e)); return; }
         req.onupgradeneeded = (e) => {
             const db = e.target.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
@@ -161,7 +208,8 @@ function initDB() {
             db.onclose = () => { _dbPromise = null; };
             resolve(db);
         };
-        req.onerror = () => { _dbPromise = null; reject(req.error); };
+        // 開けない（SecurityError など）場合は、止まらずにメモリ上で動かす
+        req.onerror = () => { resolve(_memoryDB._inst = _useMemoryDB(req.error)); };
     });
     return _dbPromise;
 }
@@ -699,12 +747,12 @@ async function garbageCollectImages() {
         const app = tx.objectStore(STORE_NAME);
         const imgs = tx.objectStore(IMG_STORE);
         const get = (store, key) => new Promise((res, rej) => { const r = store.get(key); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-        const [j, n, keys] = await Promise.all([
-            get(app, 'journalData'), get(app, 'notebookData'),
+        const [j, n, dr, keys] = await Promise.all([
+            get(app, 'journalData'), get(app, 'notebookData'), get(app, 'drafts'),
             new Promise((res, rej) => { const r = imgs.getAllKeys(); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); })
         ]);
         // 保存済みレコード＋メモリ上のデータ＋この起動中に保存した画像は消さない（保存途中の画像を守る）
-        const text = JSON.stringify(j || {}) + JSON.stringify(n || []) + JSON.stringify(journalData) + JSON.stringify(notebookTombstones);
+        const text = JSON.stringify(j || {}) + JSON.stringify(n || []) + JSON.stringify(journalData) + JSON.stringify(notebookTombstones) + JSON.stringify(dr || {});
         const used = new Set(_sessionStoredHashes);
         let m; const re = new RegExp(IDB_REF_RE.source, 'g');
         while ((m = re.exec(text))) used.add(m[1]);
@@ -1112,7 +1160,21 @@ const appDataReady = new Promise(r => { _resolveAppDataReady = r; });
 
 // ※以前は window.onload（画像・外部ファイルをすべて読み終えるまで待つ）で起動していたため、
 //   通信が遅いと起動やログイン後の同期開始が遅れていた。DOMの準備ができた時点で起動する。
+// 端末の空き容量が少なくなっても、このアプリのデータ（同期前の記録を含む）を
+// ブラウザが勝手に消さないよう依頼する。許可されなくても動作は変わらない。
+function requestPersistentStorage() {
+    try {
+        if (navigator.storage && navigator.storage.persist) {
+            navigator.storage.persisted().then(already => {
+                if (!already) return navigator.storage.persist();
+                return true;
+            }).then(ok => { window._storagePersisted = !!ok; }).catch(() => {});
+        }
+    } catch (e) { /* 非対応ブラウザ */ }
+}
+
 async function startApp() {
+    requestPersistentStorage();
     applyTheme(); 
     applyHideEmptyCardsSetting();
     applyGalleryColumnsSetting();
@@ -1196,6 +1258,10 @@ async function startApp() {
     setupMiniCalSwipe(); 
     document.body.classList.add('ready');
     _resolveAppDataReady();
+    if (storageUnavailable && typeof showToast === 'function') {
+        showToast('⚠️ この開き方では、この端末に保存できません（Safari でファイルを直接開いた・プライベートブラウズなど）。画面は使えますが、ページを閉じると書いた内容は端末に残りません。いつものURL（GitHub Pages）から開いてください。', 60000);
+    }
+    if (typeof initDrafts === 'function') initDrafts().catch(e => console.warn('書きかけの読み込みに失敗しました', e));
     setTimeout(garbageCollectImages, 8000);
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { startApp().catch(_startupFailed); });

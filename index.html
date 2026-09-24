@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.24-6">
+    <link rel="stylesheet" href="style.css?v=2026.09.24-10">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.24-6';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.24-10';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -77,11 +77,57 @@
                     </div>
                 </div>
 
-                <div class="scope-segmented-group">
-                    <button class="scope-segmented-btn active" id="btnScopeDay" onclick="setCalendarScope('day')">日</button>
-                    <button class="scope-segmented-btn" id="btnScopeWeek" onclick="setCalendarScope('week')">週</button>
-                    <button class="scope-segmented-btn" id="btnScopeMonth" onclick="setCalendarScope('month')">月</button>
-                    <button class="scope-segmented-btn" id="btnScopePhoto" onclick="setCalendarScope('photo')">写真</button>
+                <div class="view-scope-list sidebar-scope-list" aria-label="表示の切り替え">
+                    <div class="view-scope-item" id="btnScopeDay" onclick="setCalendarScope('day')" role="button" tabindex="0">
+                        <div class="view-scope-left">
+                            <div class="view-scope-icon-box">☀️</div>
+                            <div class="view-scope-text">
+                                <span class="view-scope-eyebrow">DAILY JOURNAL</span>
+                                <span class="view-scope-name">DAILY</span>
+                            </div>
+                        </div>
+                        <span class="view-scope-check">✓</span>
+                    </div>
+                    <div class="view-scope-item" id="btnScopeWeek" onclick="setCalendarScope('week')" role="button" tabindex="0">
+                        <div class="view-scope-left">
+                            <div class="view-scope-icon-box">🗓️</div>
+                            <div class="view-scope-text">
+                                <span class="view-scope-eyebrow">WEEKLY JOURNAL</span>
+                                <span class="view-scope-name">WEEKLY</span>
+                            </div>
+                        </div>
+                        <span class="view-scope-check">✓</span>
+                    </div>
+                    <div class="view-scope-item" id="btnScopeMonth" onclick="setCalendarScope('month')" role="button" tabindex="0">
+                        <div class="view-scope-left">
+                            <div class="view-scope-icon-box">📅</div>
+                            <div class="view-scope-text">
+                                <span class="view-scope-eyebrow">MONTHLY JOURNAL</span>
+                                <span class="view-scope-name">MONTHLY</span>
+                            </div>
+                        </div>
+                        <span class="view-scope-check">✓</span>
+                    </div>
+                    <div class="view-scope-item" id="btnScopePhoto" onclick="setCalendarScope('photo')" role="button" tabindex="0">
+                        <div class="view-scope-left">
+                            <div class="view-scope-icon-box">📸</div>
+                            <div class="view-scope-text">
+                                <span class="view-scope-eyebrow">PHOTO JOURNAL</span>
+                                <span class="view-scope-name">PHOTO</span>
+                            </div>
+                        </div>
+                        <span class="view-scope-check">✓</span>
+                    </div>
+                    <div class="view-scope-item" id="btnScopePins" onclick="selectPinnedFromModal()" role="button" tabindex="0">
+                        <div class="view-scope-left">
+                            <div class="view-scope-icon-box">🔖</div>
+                            <div class="view-scope-text">
+                                <span class="view-scope-eyebrow">BOOKMARKS</span>
+                                <span class="view-scope-name">しおり</span>
+                            </div>
+                        </div>
+                        <span class="view-scope-check">✓</span>
+                    </div>
                 </div>
 
                 <button class="cal-today-jump-btn" id="calJumpCurrentBtn" onclick="jumpToCurrentScopePeriod()">
@@ -412,6 +458,7 @@
                 <label class="slot-picker" title="タップして時刻を変える"><span class="modal-time-badge" id="modalCurrentTimeBadge">12:00</span><input type="time" class="slot-input" id="addSlotTime" onclick="openSlotPicker(this)" onchange="changeAddSlot()"></label>
             </div>
             <div class="slot-hint" id="addSlotHint" style="display: none;"></div>
+            <div class="draft-bar" id="addDraftBar" style="display: none;"><span class="draft-bar-text"></span><button type="button" class="draft-bar-btn" onclick="discardModalDraft('add')">破棄</button></div>
             
             <div class="category-picker-section">
                 <div class="category-chips-scroll" id="addCategoryChipsContainer"></div>
@@ -445,7 +492,7 @@
             </div>
 
             <div class="modal-actions">
-                <button class="modal-btn cancel" onclick="closeModal('addModal')">キャンセル</button>
+                <button class="modal-btn cancel" onclick="cancelAddModal()">キャンセル</button>
                 <button class="modal-btn submit" onclick="saveNewLog()">追加する</button>
             </div>
         </div>
@@ -588,6 +635,7 @@
                 <label class="slot-picker" title="タップして時刻を変える"><span class="modal-time-badge" id="editModalTimeBadge">12:00</span><input type="time" class="slot-input" id="editSlotTime" onclick="openSlotPicker(this)" onchange="changeEditSlot()"></label>
             </div>
             <div class="slot-hint" id="editSlotHint" style="display: none;"></div>
+            <div class="draft-bar" id="editDraftBar" style="display: none;"><span class="draft-bar-text"></span><button type="button" class="draft-bar-btn" onclick="discardModalDraft('edit')">元に戻す</button></div>
 
             <div class="category-picker-section">
                 <div class="category-chips-scroll" id="editCategoryChipsContainer"></div>
@@ -622,7 +670,7 @@
 
             <div class="modal-actions three-columns">
                 <button class="modal-btn delete" onclick="deleteFromEditModal()">削除</button>
-                <button class="modal-btn cancel" onclick="closeModal('editModal')">キャンセル</button>
+                <button class="modal-btn cancel" onclick="cancelEditModal()">キャンセル</button>
                 <button class="modal-btn submit" onclick="saveEditedLog()">更新</button>
             </div>
         </div>
@@ -653,7 +701,7 @@
             <div class="search-input-combo-row">
                 <div class="search-box-large-wrap">
                     <span class="search-box-large-icon">🔍</span>
-                    <input type="text" class="search-input-large" id="searchInput" placeholder="単語をスペース区切りで検索..." oninput="handleGlobalSearchInput()">
+                    <input type="text" class="search-input-large" id="searchInput" placeholder="キーワード" oninput="handleGlobalSearchInput()">
                     <button type="button" class="search-input-clear-btn" id="searchClearBtn" onclick="clearGlobalSearchInput()" title="クリア">✕</button>
                 </div>
                 
@@ -678,6 +726,28 @@
                     <span>📔 ノート</span>
                     <span class="search-tab-count" id="searchTabCount_notebooks">0</span>
                 </button>
+            </div>
+
+            <!-- 絞り込み（写真あり・しおり・期間） -->
+            <div class="search-refine-row">
+                <button type="button" class="search-refine-chip" id="searchRefine_photo" onclick="toggleSearchRefine('photo')" aria-pressed="false" title="写真付きの記録・ノートだけ"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.6-2.2A1.5 1.5 0 0 1 9.8 5h4.4a1.5 1.5 0 0 1 1.2.8L17 8h3a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 19H4a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 4 8z"/><circle cx="12" cy="13" r="3.3"/></svg><span>写真</span></button>
+                <button type="button" class="search-refine-chip is-pin" id="searchRefine_pin" onclick="toggleSearchRefine('pin')" aria-pressed="false"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h10a1 1 0 0 1 1 1v16l-6-4-6 4v-16a1 1 0 0 1 1-1z"/></svg><span>しおり</span></button>
+                <label class="search-refine-chip search-refine-period" id="searchRefine_periodWrap">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span id="searchRefinePeriodLabel">期間</span><svg class="search-refine-chev" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                    <select id="searchRefinePeriod" onchange="changeSearchPeriod(this.value)" aria-label="期間">
+                        <option value="all">すべての期間（指定なし）</option>
+                        <option value="7">1週間</option>
+                        <option value="30">1か月</option>
+                        <option value="90">3か月</option>
+                        <option value="365">1年</option>
+                        <option value="custom">期間を指定…</option>
+                    </select>
+                </label>
+            </div>
+            <div class="search-range-row" id="searchRangeRow" style="display: none;">
+                <input type="date" id="searchRangeFrom" onchange="changeSearchRange()" aria-label="開始日">
+                <span>〜</span>
+                <input type="date" id="searchRangeTo" onchange="changeSearchRange()" aria-label="終了日">
             </div>
 
             <!-- 結果一覧コンテナ -->
@@ -1068,14 +1138,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.24-6"></script>
-    <script src="main.js?v=2026.09.24-6"></script>
-    <script src="calendar.js?v=2026.09.24-6"></script>
-    <script src="notebooks.js?v=2026.09.24-6"></script>
-    <script src="ui.js?v=2026.09.24-6"></script>
+    <script src="purify.min.js?v=2026.09.24-10"></script>
+    <script src="main.js?v=2026.09.24-10"></script>
+    <script src="calendar.js?v=2026.09.24-10"></script>
+    <script src="notebooks.js?v=2026.09.24-10"></script>
+    <script src="ui.js?v=2026.09.24-10"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.24-6"></script>
+    <script src="supabase-sync.js?v=2026.09.24-10"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 

@@ -1951,3 +1951,73 @@ body.focus-mode .connected-view-container { max-width: 980px; margin-left: auto;
     #addModal .modal-header .modal-target-badge, #editModal .modal-header .modal-target-badge { font-size: 11px; padding: 3px 8px; }
     #addModal .modal-header .modal-time-badge, #editModal .modal-header .modal-time-badge { font-size: 12px; padding: 4px 8px; }
 }
+
+/* ===== 2026.09.24-7: 点検で見つかった表示崩れ ===== */
+.graph-title-row { display: flex; align-items: center; gap: 8px 12px; margin-top: 2px; flex-wrap: wrap; }
+.graph-overlay-header .date-title-wrapper { min-width: 0; }
+.option-group > div:first-child { flex: 1 1 auto; min-width: 7.5em; }
+.option-group > .settings-select { flex: 0 1 auto; min-width: 0; max-width: 58%; text-overflow: ellipsis; }
+.modal-btn { white-space: nowrap; }
+.slack-direction-badge, .log-category-badge { white-space: nowrap; flex-shrink: 0; }
+@media (max-width: 400px) {
+  .modal-actions.three-columns { gap: 8px; }
+  .modal-actions.three-columns .modal-btn { padding-left: 6px; padding-right: 6px; font-size: 14.5px; }
+  .graph-overlay-header .date-title { font-size: 20px; }
+}
+
+/* 書きかけ（下書き）の復元表示：控えめに */
+.draft-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -2px 0 10px; padding: 7px 10px 7px 12px; border-radius: 10px; background: var(--item-bg); border: 1px solid var(--item-border); font-size: 12px; color: var(--text-secondary); }
+.draft-bar-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-bar-btn { flex-shrink: 0; background: transparent; border: none; color: var(--accent-color); font-size: 12px; font-weight: 700; padding: 2px 4px; cursor: pointer; }
+.app-toast.draft-toast { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-left: 1px solid var(--card-border); cursor: default; padding: 9px 10px 9px 14px; }
+.draft-toast-text { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-toast-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.draft-toast-btn { border: none; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; background: var(--accent-color); color: #fff; }
+.draft-toast-btn.ghost { background: transparent; color: var(--text-secondary); }
+
+/* 検索の絞り込み（写真あり・しおり・期間） */
+.search-range-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.search-range-row input[type="date"] { flex: 1; min-width: 0; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 10px; padding: 6px 8px; color: var(--text-primary); font-size: 13px; font-family: inherit; }
+.search-mini-mark { font-size: 10.5px; color: var(--text-secondary); white-space: nowrap; }
+.search-mini-mark.pin { color: var(--pin); }
+.search-more-note { text-align: center; font-size: 12px; color: var(--text-secondary); padding: 12px 0 4px; }
+
+/* ===== 2026.09.24-8 ===== */
+/* 検索の絞り込み：タブと同じ質感の3つのボタン */
+.search-refine-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.search-refine-chip { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 10px; border-radius: 11px; background: var(--item-bg); border: 1px solid var(--item-border); color: var(--text-primary); font-family: inherit; font-size: 12.5px; font-weight: 650; letter-spacing: -0.1px; white-space: nowrap; cursor: pointer; -webkit-appearance: none; appearance: none; outline: none; -webkit-tap-highlight-color: transparent; transition: background-color 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.18s, transform 0.12s; min-width: 0; }
+.search-refine-chip svg { flex-shrink: 0; color: var(--text-secondary); transition: color 0.18s; }
+.search-refine-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.search-refine-chip:hover { border-color: rgba(128, 128, 128, 0.35); }
+.search-refine-chip:active { transform: scale(0.97); }
+.search-refine-chip:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
+.search-refine-chip.active { background: var(--accent-color); border-color: var(--accent-color); color: #fff; box-shadow: 0 3px 10px rgba(41, 151, 255, 0.28); }
+.search-refine-chip.active svg { color: #fff; }
+.search-refine-chip.is-pin.active { background: var(--pin); border-color: var(--pin); box-shadow: 0 3px 10px rgba(217, 165, 76, 0.32); }
+.search-refine-chip.is-pin.active svg { fill: currentColor; }
+.search-refine-period.active { background: var(--accent-soft); border-color: var(--accent-color); color: var(--accent-color); box-shadow: none; }
+.search-refine-period.active svg { color: var(--accent-color); }
+.search-refine-chev { margin-left: -2px; opacity: 0.7; }
+.search-refine-period select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; -webkit-appearance: none; appearance: none; border: none; }
+body.light-theme .search-refine-chip:not(.active) { background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+body.light-theme .search-refine-period.active { background: var(--accent-soft); }
+
+
+/* Mac のサイドバー：「表示ビューの切り替え」と同じ一覧をカレンダーの下に */
+.sidebar-scope-list { max-height: none; overflow: visible; flex-shrink: 0; }
+.sidebar-scope-list .view-scope-item { outline: none; }
+.sidebar-scope-list .view-scope-item:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
+body.light-theme .view-scope-item:hover { border-color: rgba(0, 0, 0, 0.12); }
+/* カレンダーは縮めず、入りきらないときはサイドバーをスクロール */
+.cal-sidebar-content { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.cal-sidebar-content::-webkit-scrollbar { display: none; }
+.cal-sidebar-content > * { flex-shrink: 0; }
+/* サイドバーは幅が狭いので、✓を右上に重ねて文字の幅を確保（見た目は同じ） */
+.sidebar-scope-list .view-scope-item { padding: 11px 14px 11px 12px; }
+.sidebar-scope-list .view-scope-left { gap: 11px; }
+.sidebar-scope-list .view-scope-eyebrow { white-space: nowrap; letter-spacing: 0.5px; }
+.sidebar-scope-list .view-scope-check { position: absolute; right: 12px; top: 50%; margin: -10px 0 0; line-height: 20px; }
+/* サイドバー内は少しだけ詰めて、よくある Mac の画面の高さに収める */
+.sidebar-scope-list { gap: 6px; }
+.sidebar-scope-list .view-scope-item { padding-top: 8px; padding-bottom: 8px; border-radius: 16px; }
+.sidebar-scope-list .view-scope-icon-box { width: 38px; height: 38px; border-radius: 12px; font-size: 17px; }
