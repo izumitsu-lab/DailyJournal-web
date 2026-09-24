@@ -58,7 +58,7 @@ function renderMiniCalendar(anim = null) {
         const b = document.createElement('button');
         let cls = ['mini-cal-day'];
         if (dk === todayStr) cls.push('today');
-        if (hasVisibleLogsForDate(dk)) cls.push('has-log');
+        if (hasVisibleLogsForDate(dk)) { cls.push('has-log'); if (calendarScope !== 'photo' && isLateOnlyDate(dk)) cls.push('late-only'); }
         
         if (calendarScope === 'day' || calendarScope === 'photo') { 
             if (dk === activeDateKey) cls.push('day-selected'); 

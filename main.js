@@ -337,6 +337,9 @@ function sanitizeLog(dateStr, raw, counter) {
     log.images = _logImages(raw).map(sanitizeImageValue).filter(Boolean);
     log.id = isSafeId(raw.id) ? raw.id : legacyLogId(dateStr, log, counter);
     if (typeof raw.updatedAt === 'string' && !isNaN(Date.parse(raw.updatedAt))) log.updatedAt = raw.updatedAt;
+    // 実際に書いた日時（変更不可）と「後日記入」の印（一度付いたら外れない）
+    if (typeof raw.writtenAt === 'string' && !isNaN(Date.parse(raw.writtenAt))) log.writtenAt = new Date(Date.parse(raw.writtenAt)).toISOString();
+    if (raw.backdated === true) log.backdated = true;
     return log;
 }
 
@@ -480,7 +483,11 @@ function _trackJournalChanges() {
             if (prev !== fp) {
                 log.updatedAt = now;
                 changed.add(d);
-                if (prev && prev.slice(0, 10) !== d) changed.add(prev.slice(0, 10));
+                if (prev && prev.slice(0, 10) !== d) {
+                    const from = prev.slice(0, 10);
+                    changed.add(from);
+                    (journalTombstones[from] = journalTombstones[from] || {})[log.id] = now;
+                }
                 _journalFp.set(log.id, fp);
                 if (journalTombstones[d] && journalTombstones[d][log.id]) delete journalTombstones[d][log.id];
             }
@@ -999,6 +1006,14 @@ function changeDeviceMode(mode) {
     updateSidebars();
     renderRightCards();
 }
+
+// "YYYY-MM-DD" と "HH:MM"（端末の時刻）→ ISO 文字列
+function slotToIso(dateStr, time) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const [hh, mm] = (time || '00:00').split(':').map(Number);
+    return new Date(y, m - 1, d, hh || 0, mm || 0).toISOString();
+}
+function nowTimeStr() { const n = new Date(); return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; }
 
 function getTodayKey() {
     const now = new Date();

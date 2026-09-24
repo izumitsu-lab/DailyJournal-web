@@ -408,10 +408,11 @@
             <div class="modal-header">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <span>タイムラインに追記</span>
-                    <span class="modal-target-badge" id="modalTargetDateBadge">今日</span>
+                    <label class="slot-picker" title="タップして過去の日に書き足す"><span class="modal-target-badge" id="modalTargetDateBadge">今日</span><input type="date" class="slot-input" id="addSlotDate" onclick="openSlotPicker(this)" onchange="changeAddSlot()"></label>
                 </div>
-                <span class="modal-time-badge" id="modalCurrentTimeBadge">12:00</span>
+                <label class="slot-picker" title="タップして時刻を変える"><span class="modal-time-badge" id="modalCurrentTimeBadge">12:00</span><input type="time" class="slot-input" id="addSlotTime" onclick="openSlotPicker(this)" onchange="changeAddSlot()"></label>
             </div>
+            <div class="slot-hint" id="addSlotHint" style="display: none;"></div>
             
             <div class="category-picker-section">
                 <div class="category-chips-scroll" id="addCategoryChipsContainer"></div>
@@ -581,9 +582,13 @@
     <div class="modal-overlay" id="editModal" onclick="outsideClose(event, 'editModal')">
         <div class="modal-content">
             <div class="modal-header">
-                <span>記録を編集</span>
-                <span class="modal-time-badge" id="editModalTimeBadge">12:00</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span>記録を編集</span>
+                    <label class="slot-picker" title="タップして日付を変える"><span class="modal-target-badge" id="editModalDateBadge">今日</span><input type="date" class="slot-input" id="editSlotDate" onclick="openSlotPicker(this)" onchange="changeEditSlot()"></label>
+                </div>
+                <label class="slot-picker" title="タップして時刻を変える"><span class="modal-time-badge" id="editModalTimeBadge">12:00</span><input type="time" class="slot-input" id="editSlotTime" onclick="openSlotPicker(this)" onchange="changeEditSlot()"></label>
             </div>
+            <div class="slot-hint" id="editSlotHint" style="display: none;"></div>
 
             <div class="category-picker-section">
                 <div class="category-chips-scroll" id="editCategoryChipsContainer"></div>

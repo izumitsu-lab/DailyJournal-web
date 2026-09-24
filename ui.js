@@ -793,7 +793,7 @@ function renderFullscreenCalendar() {
         const b = document.createElement('button');
         let cls = ['mini-cal-day'];
         if (dk === todayStr) cls.push('today');
-        if (hasVisibleLogsForDate(dk)) cls.push('has-log');
+        if (hasVisibleLogsForDate(dk)) { cls.push('has-log'); if (calendarScope !== 'photo' && isLateOnlyDate(dk)) cls.push('late-only'); }
         
         if (calendarScope === 'day' || calendarScope === 'photo') { 
             if (dk === activeDateKey) cls.push('day-selected'); 
@@ -974,7 +974,7 @@ function createLogItemHtml(log, dateStr, originalIndex) {
     else if (sType === 'outgoing') cHtml = `<div class="chat-bubble-card outgoing"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
     else cHtml = `<div class="log-content">${parseLinksAndText(log.text)}</div>`;
 
-    return `<li class="log-item" id="logItem_${dateStr}_${log.id}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${cHtml}${pHtml}</li>`;
+    return `<li class="log-item${log.backdated ? ' is-backdated' : ''}" id="logItem_${dateStr}_${log.id}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}${lateMarkHtml(log, dateStr)}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${cHtml}${pHtml}</li>`;
 }
 
 function getFilteredDayLogs(dStr) {
@@ -1158,7 +1158,7 @@ function renderPhotoJournalCarousel() {
 
         const panelKey = `photo_${dateStr}_${log.id}`;
         const p = document.createElement('div'); p.className = 'card-carousel-panel'; p.dataset.key = panelKey; p.dataset.date = dateStr;
-        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${mb}</div></div>`;
+        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}${lateMarkHtml(log, dateStr)}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${mb}</div></div>`;
         container.appendChild(p);
     });
 
@@ -1320,8 +1320,7 @@ function renderModalCategoryChips(mode, cSel) {
 }
 
 function openAddModal() {
-    const n = new Date(); document.getElementById('modalCurrentTimeBadge').textContent = `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`;
-    document.getElementById('modalTargetDateBadge').textContent = `今日 (${formatShortDate(getTodayKey())})`;
+    _addSlot = null; refreshAddSlotUI();
     document.getElementById('journalInputText').value = "";
     
     if (currentFilter.mode === 'category' && categories.some(c => c.name === currentFilter.value)) selectedAddCategory = currentFilter.value;
@@ -1343,7 +1342,7 @@ function findLogById(dStr, id) {
 function openEditModal(dStr, id) {
     const log = findLogById(dStr, id); if (!log) return;
     currentEditTarget = { dateStr: dStr, id: id };
-    document.getElementById('editModalTimeBadge').textContent = log.time || ""; document.getElementById('editInputText').value = log.text || "";
+    _editSlot = { date: dStr, time: log.time || '00:00' }; refreshEditSlotUI(); document.getElementById('editInputText').value = log.text || "";
     selectedEditCategory = log.category || "ライフログ"; 
     renderModalCategoryChips('edit', selectedEditCategory);
     const m = log.slackType || (log.isSlack ? 'incoming' : 'normal'); 
@@ -1371,7 +1370,12 @@ async function saveNewLog() {
     const t = document.getElementById('journalInputText').value.trim();
     if (!t && !currentAddPhotos.length) { alert("内容または写真を添付してください。"); return; }
     if (!selectedAddCategory) { alert("カテゴリを選択してください。"); return; }
-    const n = new Date(); const tStr = `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; const dStr = getTodayKey();
+    // 通常は「いま」。追記画面で日時を変えた場合は後日記入として、その日時に入れる（実際に書いた日時も残す）
+    let tStr = nowTimeStr(), dStr = getTodayKey(), late = false;
+    if (_addSlot) {
+        if (_slotIsFuture(_addSlot.date, _addSlot.time)) { alert("未来の日時には記録できません。"); return; }
+        dStr = _addSlot.date; tStr = _addSlot.time; late = true;
+    }
     if (!journalData[dStr]) journalData[dStr] = [];
     
     const sA = isSlackEnabledForType(getLogCategoryType(selectedAddCategory));
@@ -1382,8 +1386,11 @@ async function saveNewLog() {
         text: t, 
         category: selectedAddCategory, 
         slackType: (sA && currentAddMsgType !== 'normal') ? currentAddMsgType : null, 
-        images: [...currentAddPhotos] 
+        images: [...currentAddPhotos],
+        writtenAt: new Date().toISOString(),
+        ...(late ? { backdated: true } : {})
     });
+    _addSlot = null;
     
     await saveJournalData();
     
@@ -1415,10 +1422,31 @@ async function saveEditedLog() {
     delete target.isSlack;
     target.images = [...currentEditPhotos]; 
     delete target.image;
+
+    // 日時の変更：後日記入の印を付け（外せない）、実際に書いた日時を残す
+    let movedTo = null;
+    if (_editSlot && (_editSlot.date !== d || _editSlot.time !== target.time)) {
+        if (_slotIsFuture(_editSlot.date, _editSlot.time)) { alert("未来の日時には変更できません。"); return; }
+        if (!target.writtenAt) target.writtenAt = slotToIso(d, target.time); // 以前の記録は、元の日時が書いた日時
+        target.backdated = true;
+        target.time = _editSlot.time;
+        if (_editSlot.date !== d) {
+            movedTo = _editSlot.date;
+            journalData[d] = (journalData[d] || []).filter(l => l.id !== id);
+            if (!journalData[d].length) delete journalData[d];
+            (journalData[movedTo] = journalData[movedTo] || []).push(target);
+            if (!dateList.includes(movedTo)) { dateList.push(movedTo); dateList.sort(); }
+        }
+    }
     
     await saveJournalData();
     
-    closeModal('editModal'); renderRightCards(); 
+    closeModal('editModal');
+    if (movedTo && calendarScope !== 'notebooks') {
+        activeDateKey = movedTo; lastJournalDateKey = movedTo;
+        const p = movedTo.split('-'); miniCalYear = parseInt(p[0], 10); miniCalMonth = parseInt(p[1], 10) - 1;
+    }
+    renderRightCards(); 
     if (sidebarMode === 'cal' && calendarScope !== 'notebooks') renderMiniCalendar();
 }
 
@@ -2034,7 +2062,7 @@ function generateDayHtmlDocument(dStr, logs) {
         if (sT === 'incoming') cH = `<div style="background: rgba(175, 82, 222, 0.06); border-radius: 12px; padding: 12px 14px; margin-top: 4px;"><div style="font-size: 11px; font-weight: 700; color: #af52de; margin-bottom: 4px;">💬 ${escapeHtml(l.category || 'ライフログ')} からのメッセージ</div><div style="font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">${parseLinksAndText(l.text)}</div></div>`;
         else if (sT === 'outgoing') cH = `<div style="background: rgba(41, 151, 255, 0.06); border-radius: 12px; padding: 12px 14px; margin-top: 4px;"><div style="font-size: 11px; font-weight: 700; color: #2997ff; margin-bottom: 4px;">💬 あなた → ${escapeHtml(l.category || 'ライフログ')} への送信</div><div style="font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">${parseLinksAndText(l.text)}</div></div>`;
         else cH = `<div class="content">${parseLinksAndText(l.text)}</div>`;
-        h += `<div class="log-item"><div style="display:flex; gap:6px; align-items:center;"><span class="time">${l.time}</span><span class="cat">${escapeHtml(l.category || 'ライフログ')}</span></div>${cH}${ih}</div>`;
+        h += `<div class="log-item"><div style="display:flex; gap:6px; align-items:center;"><span class="time">${l.time}</span><span class="cat">${escapeHtml(l.category || 'ライフログ')}</span>${l.backdated ? '<span class="cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : ''}</div>${cH}${ih}</div>`;
     });
     return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${fd} - Daily Journal</title><style>:root { color-scheme: light dark; --bg: #08080a; --card-bg: #121215; --item-bg: #1a1a1f; --border: rgba(255, 255, 255, 0.08); --text-primary: #ffffff; --text-secondary: #98989f; --accent: #2997ff; --accent-soft: rgba(41, 151, 255, 0.15); } @media (prefers-color-scheme: light) { :root { --bg: #f2f2f7; --card-bg: #ffffff; --item-bg: #f8f8fa; --border: rgba(0, 0, 0, 0.08); --text-primary: #1c1c1e; --text-secondary: #8e8e93; --accent: #007aff; --accent-soft: rgba(0, 122, 255, 0.12); } } * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; } body { background-color: var(--bg); color: var(--text-primary); padding: 30px 16px; display: flex; justify-content: center; } .container { width: 100%; max-width: 640px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 24px; padding: 28px; } header { margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px; } .eyebrow { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; } h1 { font-size: 24px; font-weight: 700; margin-top: 4px; } .log-list { display: flex; flex-direction: column; gap: 14px; } .log-item { background: var(--item-bg); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; } .time { font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 8px; } .cat { font-size: 11px; font-weight: 700; background: rgba(128,128,128,0.2); padding: 2px 8px; border-radius: 8px; } .content { font-size: 16px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; } .journal-link { color: var(--accent); text-decoration: none; font-weight: 600; padding: 1px 6px; margin: 0 2px; background: var(--accent-soft); border-radius: 6px; display: inline-flex; align-items: center; gap: 3px; word-break: break-all; }</style></head><body><div class="container"><header><div class="eyebrow">${dStr}</div><h1>${fd}</h1></header><div class="log-list">${h}</div></div></body></html>`;
 }
@@ -2376,7 +2404,7 @@ async function exportArchiveHtml() {
             }
 
             return '<div class="log-item">' +
-                '<div class="log-meta"><span class="log-time">' + (l.time || '') + '</span><span class="log-cat">' + escapeHtml(l.category || 'ライフログ') + '</span></div>' +
+                '<div class="log-meta"><span class="log-time">' + (l.time || '') + '</span><span class="log-cat">' + escapeHtml(l.category || 'ライフログ') + '</span>' + (l.backdated ? '<span class="log-cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : '') + '</div>' +
                 bodyHtml + imgHtml +
                 '</div>';
         }
@@ -2850,4 +2878,120 @@ async function runBulkShrink() {
         <div class="bs-note">この端末の古い画像は自動で削除されます。${loggedIn ? '縮小した写真はクラウドへ送信され、他の端末にも反映されます。' : ''}</div>
         ${loggedIn ? `<div class="bs-note">クラウドの古い画像を消して容量を空けるには、下のボタンを押してください（未送信の分は先に送信されます。7日以内にアップロードされた画像は安全のため後日の対象になります）。</div>
         <div class="bs-actions"><button type="button" class="data-action-btn" onclick="cleanupUnusedCloudImages()">クラウドの不要な画像を削除</button></div>` : ''}`);
+}
+
+
+// ==========================================
+// 後日記入（あとから書き足した記録・日時を変えた記録）
+// ==========================================
+// その時に書くことに意味がある記録なので、日時を変えた記録には「✎ 後日記入」と角の折り返しを付ける（外せない）。
+// 実際に書いた日時（writtenAt）は画面には出さず、マークをタップしたときだけ表示する。
+function lateMarkHtml(log, dateStr) {
+    if (!log || !log.backdated) return '';
+    return `<button type="button" class="late-mark" onclick="event.stopPropagation(); showBackdateInfo(this, '${dateStr}', '${log.id}')" title="タップして実際に書いた日時を表示">✎ 後日記入</button>`;
+}
+function backdateInfoText(dateStr, log) {
+    if (!log || !log.writtenAt) return '日時を変更した記録です';
+    const w = new Date(log.writtenAt);
+    const p2 = n => String(n).padStart(2, '0');
+    const wKey = `${w.getFullYear()}-${p2(w.getMonth() + 1)}-${p2(w.getDate())}`;
+    const label = `${w.getMonth() + 1}/${w.getDate()}(${['日', '月', '火', '水', '木', '金', '土'][w.getDay()]}) ${p2(w.getHours())}:${p2(w.getMinutes())} に記入`;
+    const dayDiff = Math.round((new Date(wKey + 'T00:00:00') - new Date(dateStr + 'T00:00:00')) / 86400000);
+    const minDiff = Math.round((w - new Date(slotToIso(dateStr, log.time))) / 60000);
+    let rel;
+    if (dayDiff >= 1) rel = `${dayDiff}日後`;
+    else if (minDiff >= 60) rel = `${Math.floor(minDiff / 60)}時間後`;
+    else if (minDiff > 0) rel = `${minDiff}分後`;
+    else rel = '記入より後の時刻に変更';
+    return `${label}（${rel}）`;
+}
+let _lateTipEl = null, _lateTipTimer = null;
+function hideBackdateInfo() {
+    clearTimeout(_lateTipTimer);
+    if (_lateTipEl) { _lateTipEl.remove(); _lateTipEl = null; }
+}
+function showBackdateInfo(btn, dateStr, id) {
+    const log = findLogById(dateStr, id);
+    hideBackdateInfo();
+    const tip = document.createElement('div');
+    tip.className = 'late-tip';
+    tip.textContent = backdateInfoText(dateStr, log);
+    document.body.appendChild(tip);
+    const r = btn.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+    tip.style.left = left + 'px';
+    tip.style.top = (r.bottom + 8) + 'px';
+    tip.style.setProperty('--arrow-x', Math.max(8, Math.min(w - 18, r.left + r.width / 2 - left - 5)) + 'px');
+    _lateTipEl = tip;
+    _lateTipTimer = setTimeout(hideBackdateInfo, 3500);
+}
+document.addEventListener('pointerdown', e => { if (_lateTipEl && !(e.target.closest && e.target.closest('.late-mark'))) hideBackdateInfo(); }, true);
+document.addEventListener('scroll', () => hideBackdateInfo(), true);
+
+// 追記・編集画面の日時（バッジをタップすると日付・時刻を選べる）
+let _addSlot = null;   // null = いま
+let _editSlot = null;  // 編集中の記録の日時
+function openSlotPicker(inp) { try { if (inp.showPicker) inp.showPicker(); } catch (e) {} }
+function _slotIsFuture(date, time) { return Date.parse(slotToIso(date, time)) > Date.now(); }
+function _slotDateLabel(date) { return date === getTodayKey() ? `今日 (${formatShortDate(date)})` : formatShortDate(date); }
+function _readSlot(dateId, timeId, fallback) {
+    const today = getTodayKey();
+    let date = document.getElementById(dateId).value || fallback.date;
+    let time = document.getElementById(timeId).value || fallback.time;
+    if (!DATE_KEY_RE.test(date)) date = fallback.date;
+    if (!/^\d{1,2}:\d{2}$/.test(time)) time = fallback.time;
+    time = time.padStart(5, '0');
+    if (date > today) date = today;                       // 未来の日付は選べない
+    if (_slotIsFuture(date, time)) time = nowTimeStr();   // 今日の未来の時刻は「いま」に
+    return { date, time };
+}
+function refreshAddSlotUI() {
+    const today = getTodayKey();
+    const slot = _addSlot || { date: today, time: nowTimeStr() };
+    const dateEl = document.getElementById('addSlotDate'), timeEl = document.getElementById('addSlotTime');
+    if (!dateEl) return;
+    dateEl.max = today; dateEl.value = slot.date; timeEl.value = slot.time;
+    document.getElementById('modalTargetDateBadge').textContent = _slotDateLabel(slot.date);
+    document.getElementById('modalCurrentTimeBadge').textContent = slot.time;
+    document.querySelectorAll('#addModal .slot-picker').forEach(el => el.classList.toggle('is-late', !!_addSlot));
+    const hint = document.getElementById('addSlotHint');
+    if (_addSlot) { hint.style.display = 'flex'; hint.innerHTML = `<span>✎ 後日記入として保存されます</span><button type="button" onclick="resetAddSlot()">いまに戻す</button>`; }
+    else { hint.style.display = 'none'; hint.innerHTML = ''; }
+}
+function changeAddSlot() {
+    const now = { date: getTodayKey(), time: nowTimeStr() };
+    const s = _readSlot('addSlotDate', 'addSlotTime', _addSlot || now);
+    _addSlot = (s.date === now.date && s.time === now.time) ? null : s;
+    refreshAddSlotUI();
+}
+function resetAddSlot() { _addSlot = null; refreshAddSlotUI(); }
+function refreshEditSlotUI() {
+    const { dateStr: d, id } = currentEditTarget;
+    const log = findLogById(d, id);
+    if (!log || !_editSlot) return;
+    const dateEl = document.getElementById('editSlotDate'), timeEl = document.getElementById('editSlotTime');
+    dateEl.max = getTodayKey(); dateEl.value = _editSlot.date; timeEl.value = _editSlot.time;
+    document.getElementById('editModalDateBadge').textContent = _slotDateLabel(_editSlot.date);
+    document.getElementById('editModalTimeBadge').textContent = _editSlot.time;
+    const changed = _editSlot.date !== d || _editSlot.time !== log.time;
+    document.querySelectorAll('#editModal .slot-picker').forEach(el => el.classList.toggle('is-late', changed || !!log.backdated));
+    const hint = document.getElementById('editSlotHint');
+    if (changed) { hint.style.display = 'flex'; hint.innerHTML = `<span>✎ 日時を変えると「後日記入」の印が付きます（外せません）</span><button type="button" onclick="resetEditSlot()">元に戻す</button>`; }
+    else if (log.backdated) { hint.style.display = 'flex'; hint.innerHTML = `<span>✎ 後日記入の記録です（${escapeHtml(backdateInfoText(d, log))}）</span>`; }
+    else { hint.style.display = 'none'; hint.innerHTML = ''; }
+}
+function changeEditSlot() {
+    _editSlot = _readSlot('editSlotDate', 'editSlotTime', _editSlot);
+    refreshEditSlotUI();
+}
+function resetEditSlot() {
+    const { dateStr: d, id } = currentEditTarget; const log = findLogById(d, id);
+    if (log) _editSlot = { date: d, time: log.time };
+    refreshEditSlotUI();
+}
+// カレンダー：表示中の記録がすべて後日記入の日（点を白抜きにする）
+function isLateOnlyDate(d) {
+    const l = (journalData[d] || []).filter(i => matchesCurrentFilter(i));
+    return l.length > 0 && l.every(i => i.backdated);
 }

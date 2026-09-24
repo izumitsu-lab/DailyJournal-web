@@ -1773,3 +1773,23 @@ img[data-missing] { opacity: 0.35; background: rgba(128, 128, 128, 0.2); }
 .bulk-shrink-result .bs-actions .data-action-btn { flex: 1; min-width: 140px; }
 .bulk-shrink-progress { height: 6px; border-radius: 3px; background: var(--item-border); overflow: hidden; margin-top: 6px; }
 .bulk-shrink-progress > div { height: 100%; background: var(--accent-color); transition: width 0.2s; }
+
+/* ==========================================
+   後日記入（C3：角の折り返し＋「✎ 後日記入」）
+   ========================================== */
+.log-item.is-backdated { position: relative; border-top-right-radius: 5px; }
+.log-item.is-backdated::after { content: ''; position: absolute; right: -1px; top: -1px; width: 18px; height: 18px; background: linear-gradient(225deg, var(--card-bg) 50%, rgba(142, 142, 147, 0.30) 50%); box-shadow: -1px 1px 2px rgba(0, 0, 0, 0.05); border-bottom-left-radius: 3px; pointer-events: none; }
+.late-mark { font-size: 10.5px; font-weight: 700; color: var(--text-secondary); background: none; border: none; padding: 2px 2px; font-family: inherit; cursor: pointer; letter-spacing: 0.2px; line-height: 1.4; }
+.late-mark:hover { color: var(--text-primary); }
+.late-tip { position: fixed; z-index: 3000; background: rgba(40, 40, 45, 0.94); color: #fff; font-size: 11.5px; font-weight: 600; padding: 6px 10px; border-radius: 9px; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2); animation: sidebarFadeIn 0.15s ease; }
+.late-tip::before { content: ''; position: absolute; left: var(--arrow-x, 20px); top: -5px; border: 5px solid transparent; border-top: 0; border-bottom-color: rgba(40, 40, 45, 0.94); }
+/* 追記・編集画面の日時（タップで変更） */
+.slot-picker { position: relative; display: inline-flex; cursor: pointer; }
+.slot-picker > span::after { content: ' ▾'; font-size: 9px; opacity: 0.75; }
+.slot-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: none; padding: 0; margin: 0; font-size: 16px; }
+.slot-picker.is-late .modal-target-badge { background: var(--text-secondary); }
+.slot-picker.is-late .modal-time-badge { background: rgba(142, 142, 147, 0.16); color: var(--text-secondary); }
+.slot-hint { font-size: 11.5px; color: var(--text-secondary); margin: -4px 2px 2px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.slot-hint button { background: none; border: none; color: var(--accent-color); font-size: 11.5px; font-weight: 700; cursor: pointer; padding: 0; font-family: inherit; }
+/* カレンダー：後日記入だけの日は点を白抜きに */
+.mini-cal-day.has-log.late-only::after { background: transparent; box-shadow: inset 0 0 0 1px var(--accent-color); width: 4px; height: 4px; }
