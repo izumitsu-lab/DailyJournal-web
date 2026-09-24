@@ -17,6 +17,21 @@ window.addEventListener('orientationchange', () => {
 });
 updateAppHeight();
 
+// アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
+const APP_VERSION = '2026.09.24-1';
+function applyAppVersionLabel() {
+    const el = document.getElementById('appVersionLabel');
+    if (!el) return;
+    const htmlVer = window.APP_HTML_VERSION || '';
+    if (htmlVer && htmlVer !== APP_VERSION) {
+        el.textContent = `版 ${APP_VERSION}（画面は ${htmlVer}）― 古いファイルが残っています。アプリを閉じて開き直してください`;
+        el.classList.add('mismatch');
+    } else {
+        el.textContent = `Daily Journal 版 ${APP_VERSION}`;
+        el.classList.remove('mismatch');
+    }
+}
+
 // デフォルトのタイプ順序（「ログ」が前、「研究管理」が後）
 const DEFAULT_TYPES = ["ログ", "研究管理", "一般"];
 
@@ -1102,6 +1117,7 @@ async function startApp() {
     applyHideEmptyCardsSetting();
     applyGalleryColumnsSetting();
     applyPhotoQualitySetting();
+    applyAppVersionLabel();
     applyDeviceModeSetting();
 
     // 他のタブに「このタブが使う」と知らせ、そちらの保存が終わるのを少し待ってから読み込む

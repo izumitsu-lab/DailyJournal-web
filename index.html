@@ -17,7 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2026.09.24-1">
+    <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
+    <script>window.APP_HTML_VERSION = '2026.09.24-1';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -925,11 +927,13 @@
 
                 <div class="settings-card-box" id="supabaseAuthBox" style="display: none;">
                     <div class="settings-card-title">👤 アカウント認証</div>
-                    <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="email">
-                    <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" name="password" autocomplete="current-password" style="margin-top: 6px;">
-                    <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        <button type="button" class="data-action-btn" onclick="signUpSupabase()">新規登録</button>
-                        <button type="button" class="data-action-btn primary-btn" onclick="signInSupabase()">ログイン</button>
+                    <div id="supabaseLoginForm">
+                        <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="email">
+                        <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" name="password" autocomplete="current-password" style="margin-top: 6px;">
+                        <div style="display: flex; gap: 8px; margin-top: 8px;">
+                            <button type="button" class="data-action-btn" onclick="signUpSupabase()">新規登録</button>
+                            <button type="button" class="data-action-btn primary-btn" onclick="signInSupabase()">ログイン</button>
+                        </div>
                     </div>
                     <button type="button" class="data-action-btn danger-btn" id="supabaseLogoutBtn" style="margin-top: 8px; display: none;" onclick="signOutSupabase()">ログアウト</button>
                     <div id="supabaseAuthStatus" style="font-size: 11.5px; margin-top: 6px; font-weight: bold; color: var(--text-secondary);">未ログイン</div>
@@ -1017,6 +1021,7 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
             </div>
 
             <button class="modal-btn submit" style="margin-top: 6px;" onclick="closeModal('settingsModal')">閉じる</button>
+            <div class="app-version" id="appVersionLabel"></div>
         </div>
     </div>
 
@@ -1077,14 +1082,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js"></script>
-    <script src="main.js"></script>
-    <script src="calendar.js"></script>
-    <script src="notebooks.js"></script>
-    <script src="ui.js"></script>
+    <script src="purify.min.js?v=2026.09.24-1"></script>
+    <script src="main.js?v=2026.09.24-1"></script>
+    <script src="calendar.js?v=2026.09.24-1"></script>
+    <script src="notebooks.js?v=2026.09.24-1"></script>
+    <script src="ui.js?v=2026.09.24-1"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js"></script>
+    <script src="supabase-sync.js?v=2026.09.24-1"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 

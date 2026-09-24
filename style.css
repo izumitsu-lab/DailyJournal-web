@@ -455,9 +455,13 @@ body.light-theme .photo-stage-viewport { background: rgba(0, 0, 0, 0.03); box-sh
     padding: 12px 14px; 
     opacity: 0; 
     pointer-events: none; 
-    transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1); 
+    /* 閉じている間は visibility: hidden にして、ぼかしの層（全画面・画面解像度）を作らせない。
+       ※以前は透明なだけで重なったままだったため、iPhone では閉じた画面14枚分のぼかし層が常にメモリを使い、
+         ビューを素早く切り替えると強制終了する原因になっていた。フェードアウトが終わってから隠す。 */
+    visibility: hidden;
+    transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s linear 0.3s; 
 }
-.modal-overlay.active { opacity: 1; pointer-events: auto; }
+.modal-overlay.active { opacity: 1; pointer-events: auto; visibility: visible; transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s; }
 
 #htmlBatchExportModal { z-index: 2600 !important; }
 #sidebarToggleModal, #exportNotebookModal, #changeNotebookCategoryModal, #changeNotebookStatusModal, #linkNotebookModal { z-index: 2500; }
@@ -657,8 +661,8 @@ body.light-theme .msg-pill-btn.type-incoming.active { color: #8944ab; }
 .view-scope-item.selected .view-scope-check { opacity: 1; transform: scale(1); }
 .view-scope-item.notebook-selected .view-scope-check { opacity: 1; transform: scale(1); color: var(--notebook-color); }
 
-.lightbox-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.92); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); z-index: 5000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1); padding: 20px; }
-.lightbox-overlay.active { opacity: 1; pointer-events: auto; }
+.lightbox-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.92); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); z-index: 5000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; visibility: hidden; transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s linear 0.25s; padding: 20px; }
+.lightbox-overlay.active { opacity: 1; pointer-events: auto; visibility: visible; transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s; }
 .lightbox-img { max-width: 96%; max-height: 88vh; border-radius: 16px; object-fit: contain; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8); transform: scale(0.96); transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
 .lightbox-overlay.active .lightbox-img { transform: scale(1); }
 
@@ -1806,3 +1810,12 @@ body.light-theme { --pin: #d9a54c; --pin-bg: #fbf7ee; --pin-border: rgba(176, 12
 .pin-btn:hover { opacity: 0.9; }
 .pin-btn:active { transform: scale(0.88); }
 .pin-btn.is-on { color: var(--pin); opacity: 1; }
+
+/* iPhone など（タッチ操作の端末）では、ぼかしを弱めて描画の負担を減らす */
+@media (hover: none) and (pointer: coarse) {
+    .modal-overlay { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    .lightbox-overlay { backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+}
+/* 版の表示 */
+.app-version { font-size: 11px; color: var(--text-secondary); text-align: center; margin-top: 4px; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.app-version.mismatch { color: #e67e22; font-weight: 700; opacity: 1; }

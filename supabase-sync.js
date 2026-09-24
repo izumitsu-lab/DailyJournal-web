@@ -281,6 +281,7 @@ async function checkSupabaseAuth() {
         statusEl.textContent = `ログイン中: ${session.user.email}`;
         statusEl.style.color = "var(--notebook-color)";
         logoutBtn.style.display = "inline-flex";
+        _setLoginFormVisible(false);
 
         // 同期は、端末内データの読み込み完了を待ってから始める（読み込み前にマージしない）
         await appDataReady;
@@ -295,6 +296,7 @@ async function checkSupabaseAuth() {
         statusEl.textContent = "未ログイン (本体保存のみ)";
         statusEl.style.color = "var(--text-secondary)";
         logoutBtn.style.display = "none";
+        _setLoginFormVisible(true);
         unsubscribeRealtime();
     }
     updateMigrateBoxVisibility();
@@ -310,11 +312,25 @@ async function signUpSupabase() {
 
     let error = null;
     try { ({ error } = await supabaseClient.auth.signUp({ email, password })); } catch (e) { error = e; }
+    if (!error) _clearPasswordInput();
     if (error) alert("登録エラー: " + (error.message || error));
     else {
         alert("登録完了！データの同期を開始します。");
         checkSupabaseAuth();
     }
+}
+
+// ログイン中はログイン欄を隠し、パスワードを画面（入力欄）に残さない。
+// ※以前はログイン後もパスワードが入力欄に残っていたため、ページが読み込み直されると
+//   iPhone が「パスワードを保存しますか？」と聞いてきた（入力欄にパスワードを残すこと自体も安全ではない）。
+function _clearPasswordInput() {
+    const pw = document.getElementById('supabasePassword');
+    if (pw) pw.value = '';
+}
+function _setLoginFormVisible(show) {
+    const f = document.getElementById('supabaseLoginForm');
+    if (f) f.style.display = show ? '' : 'none';
+    if (!show) _clearPasswordInput();
 }
 
 // iPhoneでは、自動入力や日本語入力の値が「入力欄から離れるまで」確定しないことがある。
@@ -352,6 +368,7 @@ async function signInSupabase() {
         alert("ログインエラー: " + msg + hint);
         checkSupabaseAuth();
     } else {
+        _clearPasswordInput();
         alert("ログインしました。クラウドのデータと同期します。");
         checkSupabaseAuth();
     }
