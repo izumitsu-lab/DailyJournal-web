@@ -699,19 +699,21 @@ function updateScopeButtonsUI() {
     if (v && si && sl) {
         v.className = 'bar-btn'; 
         if (showPinnedList && calendarScope !== 'notebooks') { si.textContent = '🔖'; sl.textContent = 'しおり'; v.classList.add('active-scope'); }
-        else if (calendarScope === 'day') { si.textContent = '☀️'; sl.textContent = 'DAILY'; }
-        else if (calendarScope === 'week') { si.textContent = '🗓️'; sl.textContent = 'WEEKLY'; v.classList.add('active-scope'); }
-        else if (calendarScope === 'month') { si.textContent = '📅'; sl.textContent = 'MONTHLY'; v.classList.add('active-scope'); }
-        else if (calendarScope === 'photo') { si.textContent = '📸'; sl.textContent = 'PHOTO'; v.classList.add('active-scope'); }
+        else if (calendarScope === 'day') { si.textContent = '☀️'; sl.textContent = '日表示'; }
+        else if (calendarScope === 'week') { si.textContent = '🗓️'; sl.textContent = '週表示'; v.classList.add('active-scope'); }
+        else if (calendarScope === 'month') { si.textContent = '🌙'; sl.textContent = '月表示'; v.classList.add('active-scope'); }
+        else if (calendarScope === 'photo') { si.textContent = '📸'; sl.textContent = '写真'; v.classList.add('active-scope'); }
         else if (calendarScope === 'notebooks') {
             const m = (notebookViewMode === 'linked' || notebookViewMode === 'single') ? 'card' : notebookViewMode;
-            if (m === 'card') { si.textContent = '📖'; sl.textContent = 'CARD'; }
-            else if (m === 'graph') { si.textContent = '🎯'; sl.textContent = 'GRAPH'; }
-            else if (m === 'trash') { si.textContent = '🗑️'; sl.textContent = 'TRASH'; }
-            else { si.textContent = '🗂️'; sl.textContent = 'GALLERY'; }
+            if (m === 'card') { si.textContent = '📖'; sl.textContent = 'カード'; }
+            else if (m === 'graph') { si.textContent = '🎯'; sl.textContent = 'グラフ'; }
+            else if (m === 'trash') { si.textContent = '🗑️'; sl.textContent = 'ゴミ箱'; }
+            else { si.textContent = '🗂️'; sl.textContent = 'ノート'; }
             v.classList.add('notebook-active-scope');
         }
     }
+
+    fitBarLabels();
 
     const mainIcon = document.getElementById('launcherMainIcon');
     const mainLabel = document.getElementById('launcherMainLabel');
@@ -745,7 +747,8 @@ function updateJumpButtonLabel() {
     // 下部バー: カレンダー／リンクボタン
     const clLabel = document.getElementById('btnCalendarLinkLabel');
     const clIcon = document.getElementById('btnCalendarLinkIcon');
-    if (clLabel) clLabel.textContent = isNb ? "リンク" : "カレンダー";
+    if (clLabel) clLabel.textContent = isNb ? "リンク" : "日付";
+    fitBarLabels();
     if (clIcon) clIcon.textContent = isNb ? "🔗" : "📅";
 }
 
@@ -843,6 +846,16 @@ function renderFullscreenCalendar() {
         g.appendChild(b);
     }
 
+    // 週・月の範囲の帯：行の中で途切れるところを丸める
+    const cells = Array.from(g.children);
+    const inBand = el => el && (el.classList.contains('week-selected') || el.classList.contains('month-selected'));
+    cells.forEach((el, i) => {
+        if (!inBand(el)) return;
+        const col = i % 7;
+        if (col === 0 || !inBand(cells[i - 1])) el.classList.add('band-start');
+        if (col === 6 || !inBand(cells[i + 1])) el.classList.add('band-end');
+    });
+
     // スコープボタン同期
     ['Day', 'Week', 'Month', 'Photo'].forEach(s => {
         const btn = document.getElementById(`fsBtnScope${s}`);
@@ -886,57 +899,55 @@ function clearFsJournalSearch() {
 function renderFullscreenLinkedNotes() {
     const container = document.getElementById('fsLinkedCardsContainer');
     const countBadge = document.getElementById('fsLinkedCountBadge');
+    const sub = document.getElementById('fsLinkedSubtitle');
     if (!container) return;
 
     const filteredNotebooks = getFilteredNotebooks();
     const currentNote = filteredNotebooks[currentNotebookIndex] || filteredNotebooks[0];
+    const addBtn = document.getElementById('fsLinkAddBtn');
+    if (addBtn) addBtn.style.display = currentNote && !window.IS_READONLY_MODE ? '' : 'none';
 
     if (!currentNote) {
-        container.innerHTML = '<div class="connected-side-empty">ノートがありません</div>';
+        if (sub) sub.textContent = '';
         if (countBadge) countBadge.textContent = '0';
+        container.className = '';
+        container.innerHTML = '<div class="ios-link-empty"><span class="big">📔</span><span class="ttl">ノートがありません</span></div>';
         return;
     }
+    if (sub) sub.textContent = `「${currentNote.title || '無題のノート'}」とつながっているノート`; 
 
-    const hasLinks = Array.isArray(currentNote.linkedNoteIds) && currentNote.linkedNoteIds.length > 0;
     const linkedNotes = [];
-    
-    if (hasLinks) {
-        currentNote.linkedNoteIds.forEach(lid => {
-            const found = notebookData.find(n => n.id === lid && n.status !== 'trash');
-            if (found) linkedNotes.push(found);
-        });
-    }
-
+    (Array.isArray(currentNote.linkedNoteIds) ? currentNote.linkedNoteIds : []).forEach(lid => {
+        const found = notebookData.find(n => n.id === lid && n.status !== 'trash');
+        if (found) linkedNotes.push(found);
+    });
     if (countBadge) countBadge.textContent = String(linkedNotes.length);
 
     if (linkedNotes.length === 0) {
-        container.innerHTML = `
-            <div class="connected-side-empty" style="padding: 40px 10px;">
-                <span>🔗 リンクされたノートはありません</span>
-            </div>
-        `;
+        container.className = '';
+        container.innerHTML = `<div class="ios-link-empty"><span class="big">🔗</span><span class="ttl">リンクされたノートはありません</span><span>右上の「＋ リンク」から、関連するノートをつなげられます</span></div>`;
         return;
     }
 
-    let html = "";
+    const chev = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+    let html = '';
     linkedNotes.forEach(ln => {
-        const catBadgeHtml = buildNotebookCategoryBadge(ln);
-        const statusBadgeHtml = buildStatusBadgeHtml(ln.status || 'archive', ln.id);
-        const rawContent = (ln.content && ln.content.trim()) ? buildNotebookPreviewHtml(ln.content) : '<span style="opacity:0.4;">(空のノート)</span>';
-        
-        const unlinkBtnHtml = window.IS_READONLY_MODE ? '' : `<button type="button" class="nb-unlink-btn" onclick="unlinkNotebook('${currentNote.id}', '${ln.id}', event)" title="このノートとのリンクを解除">✕ 解除</button>`;
-
+        const title = ln.title || '無題のノート';
+        const text = stripHtml(sanitizeNoteHtml(ln.content || '')).replace(/\s+/g, ' ').trim();
+        const initial = Array.from(title.trim())[0] || '📄';
+        const unlink = window.IS_READONLY_MODE ? '' : `<button type="button" class="ios-link-unlink" onclick="event.stopPropagation(); unlinkNotebook('${currentNote.id}', '${ln.id}', event)" title="このノートとのリンクを解除">解除</button>`;
         html += `
-            <div class="connected-side-card-item notebook-grid-card" onclick="openNotebookLinkedFromPopup('${ln.id}')">
-                <h3 class="notebook-grid-title">${escapeHtml(ln.title || '無題のノート')}</h3>
-                <div class="notebook-grid-preview">${rawContent}</div>
-                <div class="notebook-grid-meta">
-                    <div>${unlinkBtnHtml}</div>
-                    <div style="display: flex; gap: 4px; align-items: center;">${statusBadgeHtml}${catBadgeHtml}</div>
+            <div class="ios-link-row" onclick="openNotebookLinkedFromPopup('${ln.id}')">
+                <div class="ios-link-icon">${escapeHtml(initial)}</div>
+                <div class="ios-link-main">
+                    <div class="ios-link-title">${escapeHtml(title)}</div>
+                    <div class="ios-link-preview">${text ? escapeHtml(text.slice(0, 160)) : '<span style="opacity:.6;">（空のノート）</span>'}</div>
+                    <div class="ios-link-meta">${buildStatusBadgeHtml(ln.status || 'archive', ln.id)}${buildNotebookCategoryBadge(ln)}</div>
                 </div>
-            </div>
-        `;
+                <div class="ios-link-side">${unlink}<span class="ios-link-chev">${chev}</span></div>
+            </div>`;
     });
+    container.className = 'ios-link-list';
     container.innerHTML = html;
 }
 
@@ -3091,3 +3102,20 @@ function renderPinnedListCard() {
     container.appendChild(panel);
     if (cardScrollPositions['pins'] !== undefined) { const sw = panel.querySelector('.logs-container-wrapper'); if (sw) sw.scrollTop = cardScrollPositions['pins']; }
 }
+
+
+// ==========================================
+// 下のメニューのラベルを「…」で切らない
+// ==========================================
+// 枠に収まらないラベルだけ、文字を少しずつ小さくして全部表示する（最小 8px）。
+function fitBarLabels() {
+    document.querySelectorAll('.bottom-launcher-bar .bar-btn > span:last-child').forEach(el => {
+        el.style.fontSize = '';
+        const box = el.parentElement;
+        const avail = box.clientWidth - 2;
+        if (!avail) return;
+        let size = parseFloat(getComputedStyle(el).fontSize) || 10.5;
+        while (el.scrollWidth > avail && size > 8) { size -= 0.5; el.style.fontSize = size + 'px'; }
+    });
+}
+window.addEventListener('resize', () => fitBarLabels());

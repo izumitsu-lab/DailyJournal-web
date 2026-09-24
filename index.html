@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.24-2">
+    <link rel="stylesheet" href="style.css?v=2026.09.24-3">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.24-2';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.24-3';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -145,7 +145,7 @@
         <!-- 3. 表示ビュー切り替え -->
         <button class="bar-btn" id="btnViewScope" onclick="openViewScopeModal()">
             <span class="bar-btn-icon" id="btnViewScopeIcon">☀️</span>
-            <span id="btnViewScopeLabel">DAILY</span>
+            <span id="btnViewScopeLabel">日表示</span>
         </button>
 
         <!-- 4. 追記／ノート (メイン) -->
@@ -163,7 +163,7 @@
         <!-- 6. カレンダー／リンク（スマホ時は全画面ポップアップ起動、PC時は非表示） -->
         <button class="bar-btn" id="btnCalendarLink" onclick="handleCalendarLinkButtonClick()">
             <span class="bar-btn-icon" id="btnCalendarLinkIcon">📅</span>
-            <span id="btnCalendarLinkLabel">カレンダー</span>
+            <span id="btnCalendarLinkLabel">日付</span>
         </button>
 
         <!-- 6-alt. 更新ボタン（PC時のみ表示） -->
@@ -1067,14 +1067,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.24-2"></script>
-    <script src="main.js?v=2026.09.24-2"></script>
-    <script src="calendar.js?v=2026.09.24-2"></script>
-    <script src="notebooks.js?v=2026.09.24-2"></script>
-    <script src="ui.js?v=2026.09.24-2"></script>
+    <script src="purify.min.js?v=2026.09.24-3"></script>
+    <script src="main.js?v=2026.09.24-3"></script>
+    <script src="calendar.js?v=2026.09.24-3"></script>
+    <script src="notebooks.js?v=2026.09.24-3"></script>
+    <script src="ui.js?v=2026.09.24-3"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.24-2"></script>
+    <script src="supabase-sync.js?v=2026.09.24-3"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 
