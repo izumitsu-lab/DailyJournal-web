@@ -1793,3 +1793,16 @@ img[data-missing] { opacity: 0.35; background: rgba(128, 128, 128, 0.2); }
 .slot-hint button { background: none; border: none; color: var(--accent-color); font-size: 11.5px; font-weight: 700; cursor: pointer; padding: 0; font-family: inherit; }
 /* カレンダー：後日記入だけの日は点を白抜きに */
 .mini-cal-day.has-log.late-only::after { background: transparent; box-shadow: inset 0 0 0 1px var(--accent-color); width: 4px; height: 4px; }
+
+/* ==========================================
+   しおり（P1-c：生成りのカード＋小さい金色のしおり）
+   ========================================== */
+:root { --pin: #d9a54c; --pin-bg: rgba(217, 165, 76, 0.09); --pin-border: rgba(217, 165, 76, 0.22); }
+body.light-theme { --pin: #d9a54c; --pin-bg: #fbf7ee; --pin-border: rgba(176, 122, 42, 0.20); }
+.log-item.is-pinned { background-color: var(--pin-bg); border-color: var(--pin-border); }
+.journal-bottom-drawer.is-pinned { background-color: var(--pin-bg); border-color: var(--pin-border); }
+.log-actions { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
+.pin-btn { background: transparent; border: none; color: var(--text-secondary); opacity: 0.5; cursor: pointer; padding: 4px 5px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; transition: opacity 0.15s, color 0.15s, transform 0.15s; }
+.pin-btn:hover { opacity: 0.9; }
+.pin-btn:active { transform: scale(0.88); }
+.pin-btn.is-on { color: var(--pin); opacity: 1; }

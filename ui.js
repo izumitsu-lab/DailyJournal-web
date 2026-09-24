@@ -629,8 +629,10 @@ function openViewScopeModal() { updateViewScopeModalUI(); openModal('viewScopeMo
 function updateViewScopeModalUI() {
     ['day', 'week', 'month', 'photo'].forEach(s => {
         const i = document.getElementById(`scopeItem_${s}`);
-        if (i) i.classList.toggle('selected', calendarScope === s);
+        if (i) i.classList.toggle('selected', calendarScope === s && !showPinnedList);
     });
+    const pinItem = document.getElementById('scopeItem_pins');
+    if (pinItem) pinItem.classList.toggle('selected', showPinnedList && calendarScope !== 'notebooks');
 
     const activeNbMode = (notebookViewMode === 'linked' || notebookViewMode === 'single') ? 'card' : notebookViewMode;
     ['grid', 'card', 'graph'].forEach(m => {
@@ -649,6 +651,7 @@ function updateViewScopeModalUI() {
 function selectScopeFromModal(s) { setCalendarScope(s); closeModal('viewScopeModal'); }
 
 function setCalendarScope(scope) {
+    showPinnedList = false;
     saveCurrentScrollPositions();
     triggerSmoothViewSwitch(() => {
         if (['day', 'week', 'month', 'photo'].includes(calendarScope)) {
@@ -695,7 +698,8 @@ function updateScopeButtonsUI() {
     const si = document.getElementById('btnViewScopeIcon'), sl = document.getElementById('btnViewScopeLabel'), v = document.getElementById('btnViewScope');
     if (v && si && sl) {
         v.className = 'bar-btn'; 
-        if (calendarScope === 'day') { si.textContent = '☀️'; sl.textContent = 'DAILY'; }
+        if (showPinnedList && calendarScope !== 'notebooks') { si.textContent = '🔖'; sl.textContent = 'しおり'; v.classList.add('active-scope'); }
+        else if (calendarScope === 'day') { si.textContent = '☀️'; sl.textContent = 'DAILY'; }
         else if (calendarScope === 'week') { si.textContent = '🗓️'; sl.textContent = 'WEEKLY'; v.classList.add('active-scope'); }
         else if (calendarScope === 'month') { si.textContent = '📅'; sl.textContent = 'MONTHLY'; v.classList.add('active-scope'); }
         else if (calendarScope === 'photo') { si.textContent = '📸'; sl.textContent = 'PHOTO'; v.classList.add('active-scope'); }
@@ -813,6 +817,7 @@ function renderFullscreenCalendar() {
         b.textContent = d;
         b.onclick = () => {
             if (journalSearchQuery) clearJournalSearch();
+            if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); renderRightCards(); }
             activeDateKey = dk;
             if (!dateList.includes(dk)) { dateList.push(dk); dateList.sort(); }
             renderFullscreenCalendar();
@@ -974,7 +979,7 @@ function createLogItemHtml(log, dateStr, originalIndex) {
     else if (sType === 'outgoing') cHtml = `<div class="chat-bubble-card outgoing"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
     else cHtml = `<div class="log-content">${parseLinksAndText(log.text)}</div>`;
 
-    return `<li class="log-item${log.backdated ? ' is-backdated' : ''}" id="logItem_${dateStr}_${log.id}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}${lateMarkHtml(log, dateStr)}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${cHtml}${pHtml}</li>`;
+    return `<li class="log-item${log.backdated ? ' is-backdated' : ''}${log.pinned ? ' is-pinned' : ''}" id="logItem_${dateStr}_${log.id}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${cHtml}${pHtml}</li>`;
 }
 
 function getFilteredDayLogs(dStr) {
@@ -1002,6 +1007,11 @@ function renderRightCards() {
     const container = document.getElementById('journalCarouselContainer');
     if (container) container.classList.remove('grid-mode-active');
     
+    if (calendarScope !== 'notebooks' && showPinnedList) {
+        renderPinnedListCard();
+        updateSidebarReopenButtons();
+        return;
+    }
     if (calendarScope !== 'notebooks' && typeof journalSearchQuery === 'string' && journalSearchQuery.trim() !== '') {
         renderJournalSearchResultsCard(journalSearchQuery.trim());
         return;
@@ -1158,7 +1168,7 @@ function renderPhotoJournalCarousel() {
 
         const panelKey = `photo_${dateStr}_${log.id}`;
         const p = document.createElement('div'); p.className = 'card-carousel-panel'; p.dataset.key = panelKey; p.dataset.date = dateStr;
-        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}${lateMarkHtml(log, dateStr)}</div><button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div>${mb}</div></div>`;
+        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer${log.pinned ? ' is-pinned' : ''}"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${mb}</div></div>`;
         container.appendChild(p);
     });
 
@@ -1997,6 +2007,7 @@ function renderGlobalSearchResults(query) {
 }
 
 function jumpFromGlobalSearchToDay(dateStr, targetLogIndex = null) {
+    showPinnedList = false;
     closeModal('searchModal');
     if (journalSearchQuery) clearJournalSearch();
 
@@ -2062,7 +2073,7 @@ function generateDayHtmlDocument(dStr, logs) {
         if (sT === 'incoming') cH = `<div style="background: rgba(175, 82, 222, 0.06); border-radius: 12px; padding: 12px 14px; margin-top: 4px;"><div style="font-size: 11px; font-weight: 700; color: #af52de; margin-bottom: 4px;">💬 ${escapeHtml(l.category || 'ライフログ')} からのメッセージ</div><div style="font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">${parseLinksAndText(l.text)}</div></div>`;
         else if (sT === 'outgoing') cH = `<div style="background: rgba(41, 151, 255, 0.06); border-radius: 12px; padding: 12px 14px; margin-top: 4px;"><div style="font-size: 11px; font-weight: 700; color: #2997ff; margin-bottom: 4px;">💬 あなた → ${escapeHtml(l.category || 'ライフログ')} への送信</div><div style="font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">${parseLinksAndText(l.text)}</div></div>`;
         else cH = `<div class="content">${parseLinksAndText(l.text)}</div>`;
-        h += `<div class="log-item"><div style="display:flex; gap:6px; align-items:center;"><span class="time">${l.time}</span><span class="cat">${escapeHtml(l.category || 'ライフログ')}</span>${l.backdated ? '<span class="cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : ''}</div>${cH}${ih}</div>`;
+        h += `<div class="log-item"><div style="display:flex; gap:6px; align-items:center;"><span class="time">${l.time}</span><span class="cat">${escapeHtml(l.category || 'ライフログ')}</span>${l.backdated ? '<span class="cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : ''}${l.pinned ? '<span class="cat" style="background:none;">🔖</span>' : ''}</div>${cH}${ih}</div>`;
     });
     return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${fd} - Daily Journal</title><style>:root { color-scheme: light dark; --bg: #08080a; --card-bg: #121215; --item-bg: #1a1a1f; --border: rgba(255, 255, 255, 0.08); --text-primary: #ffffff; --text-secondary: #98989f; --accent: #2997ff; --accent-soft: rgba(41, 151, 255, 0.15); } @media (prefers-color-scheme: light) { :root { --bg: #f2f2f7; --card-bg: #ffffff; --item-bg: #f8f8fa; --border: rgba(0, 0, 0, 0.08); --text-primary: #1c1c1e; --text-secondary: #8e8e93; --accent: #007aff; --accent-soft: rgba(0, 122, 255, 0.12); } } * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; } body { background-color: var(--bg); color: var(--text-primary); padding: 30px 16px; display: flex; justify-content: center; } .container { width: 100%; max-width: 640px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 24px; padding: 28px; } header { margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px; } .eyebrow { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; } h1 { font-size: 24px; font-weight: 700; margin-top: 4px; } .log-list { display: flex; flex-direction: column; gap: 14px; } .log-item { background: var(--item-bg); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; } .time { font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 8px; } .cat { font-size: 11px; font-weight: 700; background: rgba(128,128,128,0.2); padding: 2px 8px; border-radius: 8px; } .content { font-size: 16px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; } .journal-link { color: var(--accent); text-decoration: none; font-weight: 600; padding: 1px 6px; margin: 0 2px; background: var(--accent-soft); border-radius: 6px; display: inline-flex; align-items: center; gap: 3px; word-break: break-all; }</style></head><body><div class="container"><header><div class="eyebrow">${dStr}</div><h1>${fd}</h1></header><div class="log-list">${h}</div></div></body></html>`;
 }
@@ -2404,7 +2415,7 @@ async function exportArchiveHtml() {
             }
 
             return '<div class="log-item">' +
-                '<div class="log-meta"><span class="log-time">' + (l.time || '') + '</span><span class="log-cat">' + escapeHtml(l.category || 'ライフログ') + '</span>' + (l.backdated ? '<span class="log-cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : '') + '</div>' +
+                '<div class="log-meta"><span class="log-time">' + (l.time || '') + '</span><span class="log-cat">' + escapeHtml(l.category || 'ライフログ') + '</span>' + (l.backdated ? '<span class="log-cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : '') + (l.pinned ? '<span class="log-cat" style="background:none;">🔖</span>' : '') + '</div>' +
                 bodyHtml + imgHtml +
                 '</div>';
         }
@@ -2994,4 +3005,89 @@ function resetEditSlot() {
 function isLateOnlyDate(d) {
     const l = (journalData[d] || []).filter(i => matchesCurrentFilter(i));
     return l.length > 0 && l.every(i => i.backdated);
+}
+
+
+// ==========================================
+// しおり（お気に入りの記録）
+// ==========================================
+// どの記録にも編集ボタンの左に薄いしおりがあり、タップで付け外しする。付けた記録は生成り色のカードになる。
+// 「表示ビュー > しおり」で、しおりを挟んだ記録だけを新しい順に見返せる。
+let showPinnedList = false;
+function pinIconSvg(on) {
+    return `<svg width="15" height="15" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg>`;
+}
+function pinButtonHtml(log, dateStr) {
+    if (window.IS_READONLY_MODE) return '';
+    const on = !!log.pinned;
+    return `<button type="button" class="pin-btn${on ? ' is-on' : ''}" data-pin-id="${log.id}" onclick="event.stopPropagation(); togglePin('${dateStr}', '${log.id}')" title="${on ? 'しおりを外す' : 'しおりを挟む'}" aria-label="${on ? 'しおりを外す' : 'しおりを挟む'}" aria-pressed="${on}">${pinIconSvg(on)}</button>`;
+}
+async function togglePin(dateStr, id) {
+    const log = findLogById(dateStr, id);
+    if (!log) return;
+    if (log.pinned) delete log.pinned; else log.pinned = true;
+    const on = !!log.pinned;
+    // 画面を描き直さずにその場で切り替える（スクロール位置を保つ）
+    document.querySelectorAll(`.pin-btn[data-pin-id="${id}"]`).forEach(b => {
+        b.classList.toggle('is-on', on);
+        b.innerHTML = pinIconSvg(on);
+        b.title = on ? 'しおりを外す' : 'しおりを挟む';
+        b.setAttribute('aria-label', b.title); b.setAttribute('aria-pressed', String(on));
+        const li = b.closest('.log-item'); if (li) li.classList.toggle('is-pinned', on);
+        const dr = b.closest('.journal-bottom-drawer'); if (dr) dr.classList.toggle('is-pinned', on);
+    });
+    await saveJournalData();
+}
+function selectPinnedFromModal() {
+    closeModal('viewScopeModal');
+    triggerSmoothViewSwitch(() => {
+        if (calendarScope === 'notebooks') {
+            calendarScope = lastJournalScope || 'day';
+            if (lastJournalDateKey) activeDateKey = lastJournalDateKey;
+        }
+        showPinnedList = true;
+        if (journalSearchQuery) {
+            journalSearchQuery = '';
+            ['journalSearchInput', 'fsJournalSearchInput'].forEach(i => { const el = document.getElementById(i); if (el) el.value = ''; });
+            ['journalSearchClearBtn', 'fsJournalSearchClearBtn'].forEach(i => { const el = document.getElementById(i); if (el) el.classList.remove('active'); });
+        }
+        updateScopeButtonsUI(); updateJumpButtonLabel();
+        if (sidebarMode === 'cal') updateSidebars();
+        renderRightCards();
+    });
+}
+function closePinnedList() {
+    triggerSmoothViewSwitch(() => { showPinnedList = false; updateScopeButtonsUI(); renderRightCards(); });
+}
+function getPinnedLogs() {
+    const out = [];
+    Object.keys(journalData).forEach(d => (journalData[d] || []).forEach((log, i) => { if (log.pinned && matchesCurrentFilter(log)) out.push({ dateStr: d, log, index: i }); }));
+    return out.sort((a, b) => (b.dateStr + (b.log.time || '')).localeCompare(a.dateStr + (a.log.time || '')));
+}
+function renderPinnedListCard() {
+    const container = document.getElementById('journalCarouselContainer');
+    container.innerHTML = '';
+    const items = getPinnedLogs();
+    let body = '';
+    if (!items.length) {
+        body = `<div class="empty-state"><span style="font-size: 32px;">🔖</span><span style="font-size: 15px; font-weight: 600; margin-top: 8px;">しおりを挟んだ記録はまだありません</span><span style="font-size: 13px; opacity: 0.7;">記録の右上のしおりをタップすると挟めます</span></div>`;
+    } else {
+        let cur = null;
+        body = '<ul class="log-list">';
+        items.forEach(m => {
+            if (m.dateStr !== cur) {
+                cur = m.dateStr;
+                body += `</ul><div class="timeline-date-divider" data-date="${cur}"><span class="timeline-date-label" onclick="jumpToDayFromTimeline('${cur}')">📅 ${formatDateHeader(cur)}<span style="opacity:.6; font-weight:600; margin-left:6px;">${cur.slice(0, 4)}</span></span><div class="timeline-date-line"></div></div><ul class="log-list">`;
+            }
+            body += createLogItemHtml(m.log, m.dateStr, m.index);
+        });
+        body += '</ul>';
+    }
+    const panel = document.createElement('div');
+    panel.className = 'card-carousel-panel';
+    panel.style.width = '100%';
+    panel.dataset.key = 'pins';
+    panel.innerHTML = `<div class="main-display"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow" style="color: var(--pin);">BOOKMARKS</span><h1 class="date-title">🔖 しおり</h1></div><div class="header-actions">${getActiveFilterBadgeHtml()}<button type="button" class="data-action-btn" onclick="closePinnedList()" style="font-size: 11px; padding: 4px 9px;">閉じる</button><span class="header-badge" style="background: var(--pin); color: #fff;">${items.length} 件</span></div></div><div class="logs-container-wrapper" style="padding: 4px 2px;">${body}</div></div>`;
+    container.appendChild(panel);
+    if (cardScrollPositions['pins'] !== undefined) { const sw = panel.querySelector('.logs-container-wrapper'); if (sw) sw.scrollTop = cardScrollPositions['pins']; }
 }

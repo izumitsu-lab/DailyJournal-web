@@ -340,6 +340,7 @@ function sanitizeLog(dateStr, raw, counter) {
     // 実際に書いた日時（変更不可）と「後日記入」の印（一度付いたら外れない）
     if (typeof raw.writtenAt === 'string' && !isNaN(Date.parse(raw.writtenAt))) log.writtenAt = new Date(Date.parse(raw.writtenAt)).toISOString();
     if (raw.backdated === true) log.backdated = true;
+    if (raw.pinned === true) log.pinned = true; // しおり
     return log;
 }
 
