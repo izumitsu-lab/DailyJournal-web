@@ -1819,3 +1819,91 @@ body.light-theme { --pin: #d9a54c; --pin-bg: #fbf7ee; --pin-border: rgba(176, 12
 /* 版の表示 */
 .app-version { font-size: 11px; color: var(--text-secondary); text-align: center; margin-top: 4px; opacity: 0.8; font-variant-numeric: tabular-nums; }
 .app-version.mismatch { color: #e67e22; font-weight: 700; opacity: 1; }
+
+/* ==========================================
+   iOS 風のポップアップ（カレンダー・リンク）
+   ========================================== */
+.ios-popup-overlay { padding: 14px !important; align-items: center; }
+.ios-popup-overlay .ios-popup {
+    width: 100%; max-width: 400px; max-height: min(86vh, calc(var(--app-height, 100vh) - 40px));
+    border-radius: 28px; padding: 18px 16px 14px; gap: 12px;
+    background-color: var(--modal-bg); border: 1px solid var(--modal-border);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.12);
+    transform: scale(0.94) translateY(12px); opacity: 0.6;
+    transition: transform 0.38s cubic-bezier(0.2, 0.9, 0.25, 1.05), opacity 0.25s ease;
+    overflow: hidden;
+}
+.ios-popup-overlay.active .ios-popup { transform: scale(1) translateY(0); opacity: 1; }
+.ios-popup-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 2px 2px 0; }
+.ios-head-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ios-round-btn { width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--accent-soft); color: var(--accent-color); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.12s, opacity 0.12s; }
+.ios-round-btn:active, .ios-close-btn:active, .ios-pill-btn:active { transform: scale(0.9); }
+.ios-close-btn { width: 30px; height: 30px; border-radius: 50%; border: none; background: rgba(142, 142, 147, 0.16); color: var(--text-secondary); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; margin-left: 2px; }
+.ios-pill-btn { border: none; background: var(--notebook-soft); color: var(--notebook-color); font-size: 13px; font-weight: 700; padding: 7px 12px; border-radius: 16px; cursor: pointer; font-family: inherit; }
+.ios-popup-eyebrow { font-size: 11px; font-weight: 800; letter-spacing: 0.6px; color: var(--notebook-color); }
+.ios-popup-title { font-size: 24px; font-weight: 800; letter-spacing: -0.4px; color: var(--text-primary); display: flex; align-items: center; gap: 8px; line-height: 1.2; }
+.ios-popup-sub { font-size: 12.5px; color: var(--text-secondary); margin: -6px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ios-popup-scroll { overflow-y: auto; min-height: 0; flex: 1; margin: 0 -4px; padding: 0 4px 4px; scrollbar-width: none; }
+.ios-popup-scroll::-webkit-scrollbar { display: none; }
+
+/* カレンダー */
+.ios-cal-title { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; color: var(--text-primary); line-height: 32px; padding-left: 2px; }
+.ios-search { position: relative; display: flex; align-items: center; background: rgba(142, 142, 147, 0.12); border-radius: 11px; padding: 0 10px; height: 38px; }
+.ios-search-icon { color: var(--text-secondary); flex-shrink: 0; }
+.ios-search-input { flex: 1; min-width: 0; border: none; background: transparent; outline: none; color: var(--text-primary); font-size: 16px; padding: 0 8px; height: 100%; font-family: inherit; }
+.ios-search-input::placeholder { color: var(--text-secondary); opacity: 0.85; }
+.ios-search .ios-search-clear { position: static; transform: none; }
+.ios-cal { padding: 0; gap: 4px; }
+.ios-cal .mini-cal-weekdays { font-size: 11px; font-weight: 600; opacity: 1; margin-bottom: 2px; color: var(--text-secondary); }
+.ios-cal .mini-cal-weekdays .sun { color: #ff6b6b; }
+.ios-cal .mini-cal-weekdays .sat { color: #5b8def; }
+.ios-cal .mini-cal-grid { gap: 2px 0; }
+.ios-cal .mini-cal-day { aspect-ratio: auto; height: 46px; border: none; border-radius: 0; font-size: 18px; font-weight: 500; font-variant-numeric: tabular-nums; flex-direction: column; background: transparent; }
+.ios-cal .mini-cal-day:hover { background: transparent; }
+/* 数字の後ろの丸 */
+.ios-cal .mini-cal-day::before { content: ''; position: absolute; left: 50%; top: 50%; width: 38px; height: 38px; margin: -21px 0 0 -19px; border-radius: 50%; background: transparent; transition: background-color 0.15s; z-index: -1; }
+.ios-cal .mini-cal-day { z-index: 0; }
+.ios-cal .mini-cal-day:active::before { background: rgba(142, 142, 147, 0.18); }
+.ios-cal .mini-cal-day.today { color: var(--accent-color); font-weight: 800; border: none; }
+.ios-cal .mini-cal-day.day-selected { background: transparent !important; color: #fff !important; font-weight: 700; }
+.ios-cal .mini-cal-day.day-selected::before { background: var(--accent-color); }
+.ios-cal .mini-cal-day.day-selected.today::before { background: var(--accent-color); }
+/* 週・月の範囲は帯で */
+.ios-cal .mini-cal-day.week-selected, .ios-cal .mini-cal-day.month-selected { background: var(--accent-soft); color: var(--accent-color); font-weight: 600; }
+.ios-cal .mini-cal-day.week-selected.day-focus, .ios-cal .mini-cal-day.month-selected.day-focus { background: var(--accent-soft) !important; color: #fff !important; font-weight: 700; }
+.ios-cal .mini-cal-day.week-selected.day-focus::before, .ios-cal .mini-cal-day.month-selected.day-focus::before { background: var(--accent-color); }
+.ios-cal .mini-cal-day.band-start { border-top-left-radius: 23px; border-bottom-left-radius: 23px; }
+.ios-cal .mini-cal-day.band-end { border-top-right-radius: 23px; border-bottom-right-radius: 23px; }
+/* 記録のある日の点 */
+.ios-cal .mini-cal-day.has-log::after { bottom: 1px; width: 5px; height: 5px; }
+.ios-cal .mini-cal-day.has-log.late-only::after { width: 5px; height: 5px; }
+.ios-cal .mini-cal-day.day-selected.has-log::after { background: var(--accent-color); }
+/* 表示の切り替え（iOS のセグメント） */
+.ios-segmented { background: rgba(142, 142, 147, 0.14); border: none; border-radius: 10px; padding: 2px; margin-top: 2px; }
+.ios-segmented .scope-segmented-btn { border-radius: 8px; font-size: 13px; padding: 6px 0; }
+.ios-segmented .scope-segmented-btn.active { background: var(--card-bg); color: var(--text-primary); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.04); }
+.ios-text-btn { background: none; border: none; color: var(--accent-color); font-size: 15px; font-weight: 700; padding: 6px 0 2px; cursor: pointer; font-family: inherit; }
+.ios-text-btn:active { opacity: 0.5; }
+
+/* リンクされたノート（iOS のグループ化されたリスト） */
+.ios-link-popup { max-height: min(78vh, calc(var(--app-height, 100vh) - 60px)); }
+.ios-link-list { background: var(--item-bg); border: 1px solid var(--item-border); border-radius: 16px; overflow: hidden; }
+.ios-link-row { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; cursor: pointer; position: relative; transition: background-color 0.15s; }
+.ios-link-row:active { background: rgba(142, 142, 147, 0.12); }
+.ios-link-row + .ios-link-row::before { content: ''; position: absolute; left: 60px; right: 0; top: 0; border-top: 1px solid var(--item-border); }
+.ios-link-icon { width: 34px; height: 34px; border-radius: 10px; background: var(--notebook-soft); color: var(--notebook-color); display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 800; flex-shrink: 0; }
+.ios-link-main { flex: 1; min-width: 0; }
+.ios-link-title { font-size: 15px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ios-link-preview { font-size: 12.5px; color: var(--text-secondary); line-height: 1.45; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; }
+.ios-link-meta { display: flex; gap: 4px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.ios-link-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
+.ios-link-chev { color: var(--text-secondary); opacity: 0.5; display: inline-flex; }
+.ios-link-unlink { background: none; border: none; color: var(--reset-btn-bg); font-size: 11.5px; font-weight: 700; padding: 2px 0; cursor: pointer; font-family: inherit; opacity: 0.85; }
+.ios-link-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 34px 16px 30px; color: var(--text-secondary); font-size: 13px; }
+.ios-link-empty .big { font-size: 34px; }
+.ios-link-empty .ttl { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+/* 月表示では画面の月全体が対象なので、帯は付けずに選んだ日の丸だけにする */
+.ios-cal .mini-cal-day.month-selected { background: transparent !important; color: var(--text-primary); font-weight: 500; border-radius: 0 !important; }
+.ios-cal .mini-cal-day.month-selected.today { color: var(--accent-color); font-weight: 800; }
+.ios-cal .mini-cal-day.month-selected.day-focus { color: #fff !important; font-weight: 700; }
+.ios-cal .mini-cal-day.month-selected.day-focus { background: transparent !important; }
