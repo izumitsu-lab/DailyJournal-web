@@ -2003,21 +2003,17 @@ body.light-theme .search-refine-chip:not(.active) { background: #fff; box-shadow
 body.light-theme .search-refine-period.active { background: var(--accent-soft); }
 
 
-/* Mac のサイドバー：「表示ビューの切り替え」と同じ一覧をカレンダーの下に */
-.sidebar-scope-list { max-height: none; overflow: visible; flex-shrink: 0; }
-.sidebar-scope-list .view-scope-item { outline: none; }
-.sidebar-scope-list .view-scope-item:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
-body.light-theme .view-scope-item:hover { border-color: rgba(0, 0, 0, 0.12); }
 /* カレンダーは縮めず、入りきらないときはサイドバーをスクロール */
 .cal-sidebar-content { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
 .cal-sidebar-content::-webkit-scrollbar { display: none; }
 .cal-sidebar-content > * { flex-shrink: 0; }
-/* サイドバーは幅が狭いので、✓を右上に重ねて文字の幅を確保（見た目は同じ） */
-.sidebar-scope-list .view-scope-item { padding: 11px 14px 11px 12px; }
-.sidebar-scope-list .view-scope-left { gap: 11px; }
-.sidebar-scope-list .view-scope-eyebrow { white-space: nowrap; letter-spacing: 0.5px; }
-.sidebar-scope-list .view-scope-check { position: absolute; right: 12px; top: 50%; margin: -10px 0 0; line-height: 20px; }
-/* サイドバー内は少しだけ詰めて、よくある Mac の画面の高さに収める */
-.sidebar-scope-list { gap: 6px; }
-.sidebar-scope-list .view-scope-item { padding-top: 8px; padding-bottom: 8px; border-radius: 16px; }
-.sidebar-scope-list .view-scope-icon-box { width: 38px; height: 38px; border-radius: 12px; font-size: 17px; }
+
+/* Mac のサイドバー：表示の切り替え（U2：文字だけ・選択中は薄い青と左の細い線） */
+.sidebar-scope-list { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-scope-item { position: relative; display: block; width: 100%; text-align: left; padding: 9px 12px 9px 17px; border: none; border-radius: 8px; background: transparent; font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: 1.2px; color: var(--text-secondary); cursor: pointer; -webkit-appearance: none; appearance: none; outline: none; transition: background-color 0.15s, color 0.15s; }
+.sidebar-scope-item:hover { background: rgba(128, 128, 128, 0.08); color: var(--text-primary); }
+.sidebar-scope-item:focus-visible { box-shadow: 0 0 0 2px var(--accent-soft); }
+.sidebar-scope-item.selected { background: var(--accent-soft); color: var(--accent-color); font-weight: 800; }
+.sidebar-scope-item.selected::before { content: ''; position: absolute; left: 7px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--accent-color); }
+.sidebar-scope-item.is-pins.selected { background: var(--pin-bg); color: var(--pin); }
+.sidebar-scope-item.is-pins.selected::before { background: var(--pin); }
