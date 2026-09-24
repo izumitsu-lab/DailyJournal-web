@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.24-1">
+    <link rel="stylesheet" href="style.css?v=2026.09.24-2">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.24-1';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.24-2';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -179,77 +179,62 @@
         </button>
     </div>
 
-    <!-- 全画面カレンダーポップアップ (スマホ用) -->
-    <div class="modal-overlay fullscreen-popup-overlay" id="fullscreenCalendarModal" onclick="outsideClose(event, 'fullscreenCalendarModal')">
-        <div class="modal-content fullscreen-popup-content">
-            <div class="modal-header">
-                <span style="display:flex; align-items:center; gap:6px;">📅 カレンダーメニュー</span>
-                <button class="sidebar-close-btn" onclick="closeModal('fullscreenCalendarModal')" title="閉じる">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                </button>
+    <!-- カレンダーのポップアップ (スマホ用)：iOS のカレンダー風のカード -->
+    <div class="modal-overlay fullscreen-popup-overlay ios-popup-overlay" id="fullscreenCalendarModal" onclick="outsideClose(event, 'fullscreenCalendarModal')">
+        <div class="modal-content ios-popup ios-cal-popup" role="dialog" aria-label="カレンダー">
+            <div class="ios-popup-head">
+                <div class="ios-cal-title" id="fsMiniCalTitle">2026年 9月</div>
+                <div class="ios-head-actions">
+                    <button type="button" class="ios-round-btn" onclick="changeMiniCalMonth(-1, 'prev')" aria-label="前の月"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg></button>
+                    <button type="button" class="ios-round-btn" onclick="changeMiniCalMonth(1, 'next')" aria-label="次の月"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg></button>
+                    <button type="button" class="ios-close-btn" onclick="closeModal('fullscreenCalendarModal')" aria-label="閉じる"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                </div>
             </div>
-            <div class="fullscreen-popup-body" id="fullscreenCalendarBody">
-                <!-- 検索窓 -->
-                <div class="sidebar-search-box">
-                    <span class="sidebar-search-icon">🔍</span>
-                    <input type="text" class="sidebar-search-input" id="fsJournalSearchInput" placeholder="記録を検索・絞り込み..." oninput="handleFsJournalSearchInput(event)">
-                    <button type="button" class="sidebar-search-clear" id="fsJournalSearchClearBtn" onclick="clearFsJournalSearch()" title="検索をクリア">✕</button>
-                </div>
 
-                <!-- ミニカレンダー -->
-                <div class="mini-cal-container" id="fsMiniCalContainer">
-                    <div class="mini-cal-nav">
-                        <button class="mini-cal-arrow" onclick="changeMiniCalMonth(-1, 'prev')">◀</button>
-                        <span class="mini-cal-title" id="fsMiniCalTitle">2026年 9月</span>
-                        <button class="mini-cal-arrow" onclick="changeMiniCalMonth(1, 'next')">▶</button>
-                    </div>
-                    <div class="mini-cal-weekdays">
-                        <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
-                    </div>
-                    <div class="mini-cal-grid-wrapper">
-                        <div class="mini-cal-grid" id="fsMiniCalGrid"></div>
-                    </div>
-                </div>
-
-                <!-- スコープ切り替え -->
-                <div class="scope-segmented-group" style="margin-top: 6px;">
-                    <button class="scope-segmented-btn active" id="fsBtnScopeDay" onclick="setCalendarScopeFromPopup('day')">日</button>
-                    <button class="scope-segmented-btn" id="fsBtnScopeWeek" onclick="setCalendarScopeFromPopup('week')">週</button>
-                    <button class="scope-segmented-btn" id="fsBtnScopeMonth" onclick="setCalendarScopeFromPopup('month')">月</button>
-                    <button class="scope-segmented-btn" id="fsBtnScopePhoto" onclick="setCalendarScopeFromPopup('photo')">写真</button>
-                </div>
-
-                <button class="cal-today-jump-btn" style="margin-top: 10px;" onclick="jumpToCurrentScopePeriodFromPopup()">
-                    <span style="font-size: 14px;">✦</span>
-                    <span id="fsCalJumpCurrentLabel">今日に戻る</span>
-                </button>
+            <div class="ios-search">
+                <svg class="ios-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>
+                <input type="text" class="ios-search-input" id="fsJournalSearchInput" placeholder="記録を検索" oninput="handleFsJournalSearchInput(event)">
+                <button type="button" class="sidebar-search-clear ios-search-clear" id="fsJournalSearchClearBtn" onclick="clearFsJournalSearch()" title="検索をクリア">✕</button>
             </div>
+
+            <div class="mini-cal-container ios-cal" id="fsMiniCalContainer">
+                <div class="mini-cal-weekdays">
+                    <span class="sun">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="sat">土</span>
+                </div>
+                <div class="mini-cal-grid-wrapper">
+                    <div class="mini-cal-grid" id="fsMiniCalGrid"></div>
+                </div>
+            </div>
+
+            <div class="scope-segmented-group ios-segmented">
+                <button class="scope-segmented-btn active" id="fsBtnScopeDay" onclick="setCalendarScopeFromPopup('day')">日</button>
+                <button class="scope-segmented-btn" id="fsBtnScopeWeek" onclick="setCalendarScopeFromPopup('week')">週</button>
+                <button class="scope-segmented-btn" id="fsBtnScopeMonth" onclick="setCalendarScopeFromPopup('month')">月</button>
+                <button class="scope-segmented-btn" id="fsBtnScopePhoto" onclick="setCalendarScopeFromPopup('photo')">写真</button>
+            </div>
+
+            <button type="button" class="ios-text-btn" onclick="jumpToCurrentScopePeriodFromPopup()">
+                <span id="fsCalJumpCurrentLabel">今日に戻る</span>
+            </button>
         </div>
     </div>
 
-    <!-- 全画面リンクノートポップアップ (スマホ用) -->
-    <div class="modal-overlay fullscreen-popup-overlay" id="fullscreenLinkModal" onclick="outsideClose(event, 'fullscreenLinkModal')">
-        <div class="modal-content fullscreen-popup-content">
-            <div class="modal-header">
-                <div style="display:flex; align-items:center; gap:6px;">
-                    <span style="color:var(--notebook-color); font-weight:800;">🔗 LINKED NOTES</span>
-                    <span class="connected-side-count" id="fsLinkedCountBadge">0</span>
+    <!-- リンクされたノートのポップアップ (スマホ用) -->
+    <div class="modal-overlay fullscreen-popup-overlay ios-popup-overlay" id="fullscreenLinkModal" onclick="outsideClose(event, 'fullscreenLinkModal')">
+        <div class="modal-content ios-popup ios-link-popup" role="dialog" aria-label="リンクされたノート">
+            <div class="ios-popup-head">
+                <div style="min-width: 0;">
+                    <div class="ios-popup-eyebrow">LINKED NOTES</div>
+                    <div class="ios-popup-title">リンク <span class="connected-side-count" id="fsLinkedCountBadge">0</span></div>
                 </div>
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <button type="button" class="connected-side-link-btn" id="fsLinkAddBtn" onclick="openLinkNotebookModalFromPopup()">＋ リンク</button>
-                    <button class="sidebar-close-btn" onclick="closeModal('fullscreenLinkModal')" title="閉じる">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
+                <div class="ios-head-actions">
+                    <button type="button" class="ios-pill-btn" id="fsLinkAddBtn" onclick="openLinkNotebookModalFromPopup()">＋ リンク</button>
+                    <button type="button" class="ios-close-btn" onclick="closeModal('fullscreenLinkModal')" aria-label="閉じる"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
                 </div>
             </div>
-            <div class="fullscreen-popup-body" id="fullscreenLinkBody">
-                <div class="connected-side-scroller" id="fsLinkedCardsContainer" style="padding-right:0;"></div>
+            <div class="ios-popup-sub" id="fsLinkedSubtitle"></div>
+            <div class="ios-popup-scroll">
+                <div id="fsLinkedCardsContainer"></div>
             </div>
         </div>
     </div>
@@ -1082,14 +1067,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.24-1"></script>
-    <script src="main.js?v=2026.09.24-1"></script>
-    <script src="calendar.js?v=2026.09.24-1"></script>
-    <script src="notebooks.js?v=2026.09.24-1"></script>
-    <script src="ui.js?v=2026.09.24-1"></script>
+    <script src="purify.min.js?v=2026.09.24-2"></script>
+    <script src="main.js?v=2026.09.24-2"></script>
+    <script src="calendar.js?v=2026.09.24-2"></script>
+    <script src="notebooks.js?v=2026.09.24-2"></script>
+    <script src="ui.js?v=2026.09.24-2"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.24-1"></script>
+    <script src="supabase-sync.js?v=2026.09.24-2"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 
