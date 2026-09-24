@@ -77,7 +77,7 @@ let graphPointerStart = { x: 0, y: 0 };
 let isGraphDragMoved = false;
 
 function isNotebookEnabledForCurrentFilter() {
-    if (currentFilter.mode === 'all') {
+    if (currentFilter.mode === 'all' || currentFilter.mode === 'everything') {
         return typeNotebookSettings['all'] !== false;
     } else if (currentFilter.mode === 'type') {
         return typeNotebookSettings[currentFilter.value] !== false;
@@ -330,12 +330,19 @@ function openNotebookLinked(id) {
         notebookSearchQuery = "";
         const searchInput = document.getElementById('notebookSearchInput');
         if (searchInput) searchInput.value = "";
-        if (currentFilter.mode !== 'all') {
+        if (currentFilter.mode !== 'all' && currentFilter.mode !== 'everything') {
             currentFilter = { mode: 'all', value: '' };
             updateCategoryButtonUI();
         }
         filteredNotebooks = getFilteredNotebooks();
         idx = filteredNotebooks.findIndex(n => n.id === id);
+        // ホームに出さないタイプのノートなら「すべて表示」に切り替える
+        if (idx === -1 && currentFilter.mode !== 'everything') {
+            currentFilter = { mode: 'everything', value: '' };
+            updateCategoryButtonUI();
+            filteredNotebooks = getFilteredNotebooks();
+            idx = filteredNotebooks.findIndex(n => n.id === id);
+        }
     }
 
     const targetIdx = (idx !== -1) ? idx : 0;
@@ -3529,6 +3536,12 @@ async function openAddNotebookModal() {
 
     currentNotebookIndex = 0;
     notebookSearchQuery = "";
+
+    // カテゴリは変えない。ホームに出さないタイプのノートでも書き始められるよう、表示だけ「すべて表示」にする
+    if (currentFilter.mode === 'all' && !isTypeShownOnHome(getLogCategoryType(defCat))) {
+        currentFilter = { mode: 'everything', value: '' };
+        updateCategoryButtonUI();
+    }
 
     await saveNotebookData();
 

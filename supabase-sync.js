@@ -746,6 +746,12 @@ function sanitizeSettingsData(s) {
     }
     if (s.typeSlackSettings) out.typeSlackSettings = boolMap(s.typeSlackSettings);
     if (s.typeNotebookSettings) out.typeNotebookSettings = boolMap(s.typeNotebookSettings);
+    // ホームに出さないタイプ（false のものだけを持つ）。以前の版の端末が送った設定にはこの項目がない
+    if (s.typeHomeSettings && typeof s.typeHomeSettings === 'object') {
+        const h = boolMap(s.typeHomeSettings);
+        out.typeHomeSettings = {};
+        for (const k of Object.keys(h)) if (h[k] === false) out.typeHomeSettings[k] = false;
+    }
     out._editedAt = typeof s._editedAt === 'string' ? s._editedAt : '';
     return out;
 }
@@ -769,11 +775,12 @@ function _saveSettingsBase(s) {
     localStorage.setItem(_settingsBaseKey(), JSON.stringify({
         appTypes: s.appTypes || [], categories: s.categories || [],
         typeSlackSettings: s.typeSlackSettings || {}, typeNotebookSettings: s.typeNotebookSettings || {},
+        typeHomeSettings: s.typeHomeSettings || {},
         _editedAt: s._editedAt || ''
     }));
 }
 function _currentSettings() {
-    return sanitizeSettingsData({ appTypes, categories, typeSlackSettings, typeNotebookSettings, _editedAt: getSettingsEditedAt() });
+    return sanitizeSettingsData({ appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, _editedAt: getSettingsEditedAt() });
 }
 
 // 並び順付きの一覧（タイプ名 / カテゴリ）のマージ。keyOf で同一項目を判定し、pick で中身を選ぶ
@@ -846,6 +853,10 @@ function _mergeSettings(base, local, remote) {
         categories: _mergeOrderedList(base && base.categories, local.categories, remote.categories, x => x.name, catPick),
         typeSlackSettings: _mergeBoolMap(base && base.typeSlackSettings, local.typeSlackSettings, remote.typeSlackSettings),
         typeNotebookSettings: _mergeBoolMap(base && base.typeNotebookSettings, local.typeNotebookSettings, remote.typeNotebookSettings),
+        // クラウドにこの項目がない（以前の版の端末が送った）場合は、この端末の設定を残す
+        typeHomeSettings: remote.typeHomeSettings
+            ? _mergeBoolMap(base && base.typeHomeSettings, local.typeHomeSettings, remote.typeHomeSettings)
+            : Object.assign({}, local.typeHomeSettings || {}),
         _editedAt: remote._editedAt
     };
 }
@@ -868,6 +879,11 @@ async function _applySettingsData(s, editedAt = s._editedAt) {
         Object.keys(typeNotebookSettings).forEach(k => delete typeNotebookSettings[k]);
         Object.assign(typeNotebookSettings, s.typeNotebookSettings);
         localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings));
+    }
+    if (s.typeHomeSettings) {
+        Object.keys(typeHomeSettings).forEach(k => delete typeHomeSettings[k]);
+        Object.assign(typeHomeSettings, s.typeHomeSettings);
+        localStorage.setItem('daily_journal_type_home', JSON.stringify(typeHomeSettings));
     }
     localStorage.setItem(SETTINGS_EDITED_AT_KEY, editedAt || '');
     if (typeof syncAndMigrateCategories === 'function') await syncAndMigrateCategories();
@@ -971,7 +987,7 @@ async function _pushSettings() {
 
     if (!getSettingsEditedAt()) localStorage.setItem(SETTINGS_EDITED_AT_KEY, new Date().toISOString());
     const data = JSON.parse(JSON.stringify({
-        appTypes, categories, typeSlackSettings, typeNotebookSettings,
+        appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings,
         _editedAt: getSettingsEditedAt()
     }));
     const payload = { user_id: supabaseUser.id, settings_data: data, updated_at: new Date().toISOString() };
@@ -1359,7 +1375,7 @@ async function cleanupUnusedCloudImages() {
         } else {
             const { error } = await supabaseClient.from('app_settings').upsert({
                 user_id: uid, images_cleaned_at: now,
-                settings_data: { appTypes, categories, typeSlackSettings, typeNotebookSettings, _editedAt: getSettingsEditedAt() }
+                settings_data: { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, _editedAt: getSettingsEditedAt() }
             });
             if (error) throw error;
         }

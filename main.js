@@ -18,7 +18,7 @@ window.addEventListener('orientationchange', () => {
 updateAppHeight();
 
 // アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
-const APP_VERSION = '2026.09.25-2';
+const APP_VERSION = '2026.09.25-3';
 function applyAppVersionLabel() {
     const el = document.getElementById('appVersionLabel');
     if (!el) return;
@@ -49,6 +49,9 @@ let appTypes = JSON.parse(localStorage.getItem('daily_journal_types')) || DEFAUL
 let categories = JSON.parse(localStorage.getItem('daily_journal_categories')) || DEFAULT_CATEGORIES;
 let typeSlackSettings = JSON.parse(localStorage.getItem('daily_journal_type_slack')) || DEFAULT_TYPE_SLACK;
 let typeNotebookSettings = JSON.parse(localStorage.getItem('daily_journal_type_notebook')) || DEFAULT_TYPE_NOTEBOOK;
+// 「ホーム」に表示するタイプ（false のタイプはホームに出さない。「すべて表示」や、タイプ・カテゴリを選べば見られる）
+// 値がないタイプは表示扱い
+let typeHomeSettings = (() => { try { const v = JSON.parse(localStorage.getItem('daily_journal_type_home')); return (v && typeof v === 'object') ? v : {}; } catch (e) { return {}; } })();
 
 // デフォルトで明るいテーマ（ライトテーマ）を有効化
 let lightThemeEnabled = localStorage.getItem('daily_journal_theme') !== null 
@@ -125,6 +128,7 @@ let activeDateKey = null;
 let miniCalYear = new Date().getFullYear();
 let miniCalMonth = new Date().getMonth();
 let sidebarMode = 'cal';
+// mode: 'all' = ホーム（ホームに出さないタイプを除く） / 'everything' = すべて表示 / 'type' / 'category'
 let currentFilter = { mode: 'all', value: '' };
 
 let selectedAddCategory = "ライフログ";
@@ -798,10 +802,12 @@ function addNewType(name) {
     appTypes.push(name);
     if (typeSlackSettings[name] === undefined) typeSlackSettings[name] = false;
     if (typeNotebookSettings[name] === undefined) typeNotebookSettings[name] = true;
+    delete typeHomeSettings[name]; // 新しいタイプはホームに表示
 
     saveAppTypes();
     saveTypeSlackSettings();
     saveTypeNotebookSettings();
+    saveTypeHomeSettings();
     return true;
 }
 
@@ -834,6 +840,11 @@ function renameType(oldName, newName) {
         typeNotebookSettings[newName] = true;
     }
 
+    if (typeHomeSettings[oldName] !== undefined) {
+        typeHomeSettings[newName] = typeHomeSettings[oldName];
+        delete typeHomeSettings[oldName];
+    }
+
     if (currentFilter.mode === 'type' && currentFilter.value === oldName) {
         currentFilter.value = newName;
     }
@@ -842,6 +853,7 @@ function renameType(oldName, newName) {
     saveCategories();
     saveTypeSlackSettings();
     saveTypeNotebookSettings();
+    saveTypeHomeSettings();
     return true;
 }
 
@@ -868,6 +880,7 @@ function deleteType(typeName) {
 
     delete typeSlackSettings[typeName];
     delete typeNotebookSettings[typeName];
+    delete typeHomeSettings[typeName];
 
     if (currentFilter.mode === 'type' && currentFilter.value === typeName) {
         currentFilter = { mode: 'all', value: '' };
@@ -877,6 +890,7 @@ function deleteType(typeName) {
     saveCategories();
     saveTypeSlackSettings();
     saveTypeNotebookSettings();
+    saveTypeHomeSettings();
     return true;
 }
 
@@ -1018,6 +1032,9 @@ async function _syncAndMigrateCategoriesInner() {
 function saveCategories() { if (_tabInactive) return; localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); markSettingsEdited(); }
 function saveTypeSlackSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); markSettingsEdited(); }
 function saveTypeNotebookSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); markSettingsEdited(); }
+function saveTypeHomeSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_home', JSON.stringify(typeHomeSettings)); markSettingsEdited(); }
+function isTypeShownOnHome(type) { return typeHomeSettings[type] !== false; }
+function getHomeHiddenTypes() { return appTypes.filter(t => !isTypeShownOnHome(t)); }
 function isSlackEnabledForType(type) { return typeSlackSettings[type] !== undefined ? !!typeSlackSettings[type] : false; }
 
 function applyGalleryColumnsSetting() {

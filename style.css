@@ -2017,3 +2017,11 @@ body.light-theme .search-refine-period.active { background: var(--accent-soft); 
 .sidebar-scope-item.selected::before { content: ''; position: absolute; left: 7px; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--accent-color); }
 .sidebar-scope-item.is-pins.selected { background: var(--pin-bg); color: var(--pin); }
 .sidebar-scope-item.is-pins.selected::before { background: var(--pin); }
+
+/* ===== 2026.09.25-3: ホーム／すべて表示 ===== */
+.cat-filter-all-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cat-filter-all-sub { font-size: 11.5px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cat-filter-all-btn.selected .cat-filter-all-sub { color: var(--accent-color); opacity: 0.85; }
+.cat-filter-everything-btn { margin-top: 2px; }
+.cat-filter-home-hidden { font-size: 10px; font-weight: 700; color: var(--text-secondary); background: rgba(128, 128, 128, 0.14); padding: 2px 7px; border-radius: 6px; white-space: nowrap; margin-left: 2px; }
+.settings-mini-toggle.span-all { grid-column: 1 / -1; }

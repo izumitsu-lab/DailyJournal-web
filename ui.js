@@ -428,10 +428,13 @@ function getCategoryTypeClass(catName) { const f = categories.find(c => c.name =
 function matchesCurrentFilter(item) {
     const isSlackMsg = !!(item.slackType || item.isSlack);
     
-    if (currentFilter.mode === 'all') {
+    // 「ホーム」（all）と「すべて表示」（everything）は、Slack の表示を「すべて表示時の連携設定」に従う
+    if (currentFilter.mode === 'all' || currentFilter.mode === 'everything') {
         if (isSlackMsg && typeSlackSettings['all'] === false) {
             return false;
         }
+        // ホームでは、ホームに出さないタイプを除く
+        if (currentFilter.mode === 'all' && !isTypeShownOnHome(getLogCategoryType(item.category || "ライフログ"))) return false;
         return true;
     }
     
@@ -587,17 +590,20 @@ function selectFilter(mode, value = '') {
 function renderCategoryFilterModal() {
     const c = document.getElementById('catFilterModalList'); c.innerHTML = "";
     
-    const allBtn = document.createElement('div');
-    allBtn.className = `cat-filter-all-btn ${currentFilter.mode === 'all' ? 'selected' : ''}`;
-    allBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px;"><span style="font-size: 18px;">🌐</span><span class="cat-filter-name">すべて表示 (All)</span></div>`;
-    allBtn.onclick = () => selectFilter('all'); c.appendChild(allBtn);
+    // 一番上：ホーム（ホームに出さないタイプを除く）
+    const hidden = getHomeHiddenTypes().filter(t => categories.some(ca => (ca.type || "一般") === t));
+    const homeBtn = document.createElement('div');
+    homeBtn.className = `cat-filter-all-btn ${currentFilter.mode === 'all' ? 'selected' : ''}`;
+    homeBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px; min-width: 0;"><span style="font-size: 18px;">🏠</span><div class="cat-filter-all-text"><span class="cat-filter-name">ホーム</span>${hidden.length ? `<span class="cat-filter-all-sub">${escapeHtml(hidden.join('・'))} を除く</span>` : ''}</div></div>`;
+    homeBtn.onclick = () => selectFilter('all'); c.appendChild(homeBtn);
 
     const types = appTypes.filter(t => categories.some(ca => (ca.type || "一般") === t));
     types.forEach(t => {
         const card = document.createElement('div'); card.className = 'cat-filter-type-card';
         const isT = currentFilter.mode === 'type' && currentFilter.value === t;
         const row = document.createElement('button'); row.className = `cat-filter-type-row-btn ${isT ? 'selected' : ''}`;
-        row.innerHTML = `<div class="cat-filter-type-title-area"><span class="cat-filter-type-icon">${getTypeIcon(t)}</span><span class="cat-filter-type-title">${escapeHtml(t)}</span><span class="cat-filter-type-subtext">${isT ? '(全件選択中)' : '(タイプ全件)'}</span></div>`;
+        const homeMark = isTypeShownOnHome(t) ? '' : '<span class="cat-filter-home-hidden" title="ホームには表示しないタイプ">ホーム非表示</span>';
+        row.innerHTML = `<div class="cat-filter-type-title-area"><span class="cat-filter-type-icon">${getTypeIcon(t)}</span><span class="cat-filter-type-title">${escapeHtml(t)}</span><span class="cat-filter-type-subtext">${isT ? '(全件選択中)' : '(タイプ全件)'}</span>${homeMark}</div>`;
         row.onclick = () => selectFilter('type', t); card.appendChild(row);
 
         const wrap = document.createElement('div'); wrap.className = 'cat-filter-chips-grid';
@@ -609,12 +615,19 @@ function renderCategoryFilterModal() {
         });
         card.appendChild(wrap); c.appendChild(card);
     });
+
+    // 一番下：すべて表示（ホームに出さないタイプも含めて全部）
+    const allBtn = document.createElement('div');
+    allBtn.className = `cat-filter-all-btn cat-filter-everything-btn ${currentFilter.mode === 'everything' ? 'selected' : ''}`;
+    allBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px; min-width: 0;"><span style="font-size: 18px;">🌐</span><div class="cat-filter-all-text"><span class="cat-filter-name">すべて表示</span><span class="cat-filter-all-sub">${hidden.length ? 'ホームに出さないタイプも含めて全部' : 'すべてのタイプ'}</span></div></div>`;
+    allBtn.onclick = () => selectFilter('everything'); c.appendChild(allBtn);
 }
 
 function updateCategoryButtonUI() {
     const b = document.getElementById('btnCategory'), l = document.getElementById('btnCategoryLabel');
     if (!b || !l) return;
     if (currentFilter.mode === 'all') { l.textContent = "カテゴリ"; b.classList.remove('active-filter'); }
+    else if (currentFilter.mode === 'everything') { l.textContent = "すべて"; b.classList.add('active-filter'); }
     else { l.textContent = currentFilter.value; b.classList.add('active-filter'); }
 }
 
@@ -987,7 +1000,7 @@ function openLinkNotebookModalFromPopup() {
 }
 
 function shouldShowSlackFormatting(log) {
-    if (currentFilter.mode === 'all') {
+    if (currentFilter.mode === 'all' || currentFilter.mode === 'everything') {
         return typeSlackSettings['all'] === true;
     }
     const catType = getLogCategoryType(log.category || "ライフログ");
@@ -999,7 +1012,7 @@ function createLogItemHtml(log, dateStr, originalIndex) {
     const showSlack = shouldShowSlackFormatting(log);
     const sType = showSlack ? (log.slackType || (log.isSlack ? 'incoming' : null)) : null;
 
-    const showCat = (currentFilter.mode === 'all' || currentFilter.mode === 'type');
+    const showCat = (currentFilter.mode === 'all' || currentFilter.mode === 'everything' || currentFilter.mode === 'type');
     const catBadge = showCat ? `<span class="log-category-badge ${tCls}">${escapeHtml(catName)}</span>` : '';
     let sBadge = "";
     if (sType === 'incoming') sBadge = `<span class="slack-direction-badge incoming"><span>📥</span><span>相手から</span></span>`;
@@ -1025,6 +1038,7 @@ function getFilteredDayLogs(dStr) {
 function getActiveFilterBadgeHtml() {
     if (currentFilter.mode === 'type') return `<span class="filter-status-badge type-badge"><span>${getTypeIcon(currentFilter.value)}</span><span>${escapeHtml(currentFilter.value)} (全件)</span></span>`;
     if (currentFilter.mode === 'category') return `<span class="filter-status-badge"><span>🏷️</span><span>${escapeHtml(currentFilter.value)}</span></span>`;
+    if (currentFilter.mode === 'everything') return `<span class="filter-status-badge"><span>🌐</span><span>すべて</span></span>`;
     return '';
 }
 
@@ -1552,6 +1566,13 @@ function renderSettingsTypeList() {
                 </div>
             </div>
             <div class="settings-type-toggles-grid">
+                <div class="settings-mini-toggle span-all" title="オフにすると、ホームにはこのタイプの記録・ノートを出しません（カテゴリの「すべて表示」や、このタイプを選べば見られます）">
+                    <span>🏠 ホームに表示</span>
+                    <label class="switch switch-sm">
+                        <input type="checkbox" ${isTypeShownOnHome(typeName) ? 'checked' : ''} onchange="toggleTypeHomeSetting(appTypes[${ti}], this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
                 <div class="settings-mini-toggle">
                     <span>📔 Notebooks</span>
                     <label class="switch switch-sm">
@@ -1664,6 +1685,15 @@ function toggleTypeSlackSetting(t, chk) {
     typeSlackSettings[t] = chk; 
     saveTypeSlackSettings();
     renderRightCards();
+}
+
+function toggleTypeHomeSetting(t, chk) {
+    if (t === undefined) return;
+    if (chk) delete typeHomeSettings[t]; else typeHomeSettings[t] = false;
+    saveTypeHomeSettings();
+    if (hideEmptyCards && calendarScope !== 'notebooks') adjustActiveDateToLatestLog();
+    renderRightCards();
+    if (sidebarMode === 'cal') updateSidebars();
 }
 
 function toggleTypeNotebookSetting(t, chk) {
@@ -2693,7 +2723,7 @@ async function executeBatchHtmlExport() {
 // data: URI はサイズ上限があり、写真が多いと書き出しに失敗するため Blob で書き出す
 async function exportData() {
     try {
-        const p = { appTypes, categories, typeSlackSettings, typeNotebookSettings, hideEmptyCards, deviceDisplayMode, journalData: await getJournalDataForExport(), notebookData: await getNotebookDataForExport() };
+        const p = { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, hideEmptyCards, deviceDisplayMode, journalData: await getJournalDataForExport(), notebookData: await getNotebookDataForExport() };
         const blob = new Blob([JSON.stringify(p)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url;
@@ -2728,6 +2758,7 @@ function importData(e) {
                     if (imp.categories && Array.isArray(imp.categories)) { categories = imp.categories.filter(c => c && typeof c.name === 'string' && c.name.trim()).map(c => ({ name: c.name, type: typeof c.type === 'string' ? c.type : '一般' })); saveCategories(); }
                     if (imp.typeSlackSettings && typeof imp.typeSlackSettings === 'object') { typeSlackSettings = imp.typeSlackSettings; saveTypeSlackSettings(); }
                     if (imp.typeNotebookSettings && typeof imp.typeNotebookSettings === 'object') { typeNotebookSettings = imp.typeNotebookSettings; saveTypeNotebookSettings(); }
+                    if (imp.typeHomeSettings && typeof imp.typeHomeSettings === 'object') { typeHomeSettings = {}; Object.keys(imp.typeHomeSettings).forEach(k => { if (imp.typeHomeSettings[k] === false) typeHomeSettings[k] = false; }); saveTypeHomeSettings(); }
                     if (typeof imp.hideEmptyCards === 'boolean') { hideEmptyCards = imp.hideEmptyCards; localStorage.setItem('daily_journal_hide_empty', hideEmptyCards); applyHideEmptyCardsSetting(); }
                     if (['auto', 'mobile', 'desktop'].includes(imp.deviceDisplayMode)) { deviceDisplayMode = imp.deviceDisplayMode; localStorage.setItem('daily_journal_device_mode', deviceDisplayMode); applyDeviceModeSetting(); }
 
