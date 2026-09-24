@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.24-10">
+    <link rel="stylesheet" href="style.css?v=2026.09.24-11">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.24-10';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.24-11';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -77,58 +77,13 @@
                     </div>
                 </div>
 
-                <div class="view-scope-list sidebar-scope-list" aria-label="表示の切り替え">
-                    <div class="view-scope-item" id="btnScopeDay" onclick="setCalendarScope('day')" role="button" tabindex="0">
-                        <div class="view-scope-left">
-                            <div class="view-scope-icon-box">☀️</div>
-                            <div class="view-scope-text">
-                                <span class="view-scope-eyebrow">DAILY JOURNAL</span>
-                                <span class="view-scope-name">DAILY</span>
-                            </div>
-                        </div>
-                        <span class="view-scope-check">✓</span>
-                    </div>
-                    <div class="view-scope-item" id="btnScopeWeek" onclick="setCalendarScope('week')" role="button" tabindex="0">
-                        <div class="view-scope-left">
-                            <div class="view-scope-icon-box">🗓️</div>
-                            <div class="view-scope-text">
-                                <span class="view-scope-eyebrow">WEEKLY JOURNAL</span>
-                                <span class="view-scope-name">WEEKLY</span>
-                            </div>
-                        </div>
-                        <span class="view-scope-check">✓</span>
-                    </div>
-                    <div class="view-scope-item" id="btnScopeMonth" onclick="setCalendarScope('month')" role="button" tabindex="0">
-                        <div class="view-scope-left">
-                            <div class="view-scope-icon-box">📅</div>
-                            <div class="view-scope-text">
-                                <span class="view-scope-eyebrow">MONTHLY JOURNAL</span>
-                                <span class="view-scope-name">MONTHLY</span>
-                            </div>
-                        </div>
-                        <span class="view-scope-check">✓</span>
-                    </div>
-                    <div class="view-scope-item" id="btnScopePhoto" onclick="setCalendarScope('photo')" role="button" tabindex="0">
-                        <div class="view-scope-left">
-                            <div class="view-scope-icon-box">📸</div>
-                            <div class="view-scope-text">
-                                <span class="view-scope-eyebrow">PHOTO JOURNAL</span>
-                                <span class="view-scope-name">PHOTO</span>
-                            </div>
-                        </div>
-                        <span class="view-scope-check">✓</span>
-                    </div>
-                    <div class="view-scope-item" id="btnScopePins" onclick="selectPinnedFromModal()" role="button" tabindex="0">
-                        <div class="view-scope-left">
-                            <div class="view-scope-icon-box">🔖</div>
-                            <div class="view-scope-text">
-                                <span class="view-scope-eyebrow">BOOKMARKS</span>
-                                <span class="view-scope-name">しおり</span>
-                            </div>
-                        </div>
-                        <span class="view-scope-check">✓</span>
-                    </div>
-                </div>
+                <nav class="sidebar-scope-list" aria-label="表示の切り替え">
+                    <button type="button" class="sidebar-scope-item active selected" id="btnScopeDay" onclick="setCalendarScope('day')">DAILY</button>
+                    <button type="button" class="sidebar-scope-item" id="btnScopeWeek" onclick="setCalendarScope('week')">WEEKLY</button>
+                    <button type="button" class="sidebar-scope-item" id="btnScopeMonth" onclick="setCalendarScope('month')">MONTHLY</button>
+                    <button type="button" class="sidebar-scope-item" id="btnScopePhoto" onclick="setCalendarScope('photo')">PHOTO</button>
+                    <button type="button" class="sidebar-scope-item is-pins" id="btnScopePins" onclick="selectPinnedFromModal()">BOOKMARKS</button>
+                </nav>
 
                 <button class="cal-today-jump-btn" id="calJumpCurrentBtn" onclick="jumpToCurrentScopePeriod()">
                     <span style="font-size: 13px;">✦</span>
@@ -1138,14 +1093,14 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.24-10"></script>
-    <script src="main.js?v=2026.09.24-10"></script>
-    <script src="calendar.js?v=2026.09.24-10"></script>
-    <script src="notebooks.js?v=2026.09.24-10"></script>
-    <script src="ui.js?v=2026.09.24-10"></script>
+    <script src="purify.min.js?v=2026.09.24-11"></script>
+    <script src="main.js?v=2026.09.24-11"></script>
+    <script src="calendar.js?v=2026.09.24-11"></script>
+    <script src="notebooks.js?v=2026.09.24-11"></script>
+    <script src="ui.js?v=2026.09.24-11"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.24-10"></script>
+    <script src="supabase-sync.js?v=2026.09.24-11"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 

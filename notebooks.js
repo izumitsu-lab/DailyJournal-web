@@ -1674,8 +1674,8 @@ function renderGraphMode(container, filterBadgeHtml) {
         <div class="graph-overlay-header">
             <div class="date-title-wrapper">
                 <span class="date-eyebrow" style="color: var(--notebook-color);">NOTEBOOKS • GRAPH VIEW</span>
-                <div style="display: flex; align-items: center; gap: 12px; margin-top: 2px;">
-                    <h1 class="date-title" style="margin: 0;">Knowledge Graph</h1>
+                <div class="graph-title-row">
+                    <h1 class="date-title" style="margin: 0; white-space: nowrap;">Knowledge Graph</h1>
                     <div class="graph-mode-segmented">
                         <button type="button" class="graph-mode-btn ${isLocal ? 'active' : ''}" id="graphModeBtn_local" onclick="setGraphSubMode('local')" title="選択中のノートとリンク関係のあるノートのみ表示">Local</button>
                         <button type="button" class="graph-mode-btn ${!isLocal ? 'active' : ''}" id="graphModeBtn_global" onclick="setGraphSubMode('global')" title="すべてのノートとリンク関係を表示">Global</button>
