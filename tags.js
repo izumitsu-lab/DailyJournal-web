@@ -14,8 +14,17 @@ const _tagSuggestIndex = { add: 0, edit: 0 };
 
 function _modalTags(m) { return m === 'add' ? currentAddTags : currentEditTags; }
 function _setModalTags(m, arr) { if (m === 'add') currentAddTags = arr; else currentEditTags = arr; }
-function _modalType(m) { return getLogCategoryType(m === 'add' ? selectedAddCategory : selectedEditCategory); }
-function tagScopeLabel(s) { return s === TAG_COMMON ? '共通' : s; }
+function _modalCat(m) { return m === 'add' ? selectedAddCategory : selectedEditCategory; }
+function _modalType(m) { return getLogCategoryType(_modalCat(m)); }
+// 範囲（scope）：'common'＝共通 ／ タイプ名＝そのタイプ全体 ／ 'cat:カテゴリ名'＝そのカテゴリだけ
+const TAG_CAT_PREFIX = 'cat:';
+function catScope(cat) { return TAG_CAT_PREFIX + cat; }
+function scopeCat(s) { return (typeof s === 'string' && s.startsWith(TAG_CAT_PREFIX)) ? s.slice(TAG_CAT_PREFIX.length) : null; }
+function scopeLevel(s) { return s === TAG_COMMON ? 2 : (scopeCat(s) !== null ? 0 : 1); } // 狭い順に 0,1,2
+function tagScopeLabel(s) { if (s === TAG_COMMON) return '共通'; const c = scopeCat(s); return c !== null ? c : `${s}全体`; }
+// そのカテゴリで書いているときに候補に出るか
+function isTagVisibleFor(t, cat) { return t.scope === TAG_COMMON || t.scope === catScope(cat) || t.scope === getLogCategoryType(cat); }
+function _byLevel(a, b) { return (scopeLevel(a.scope) - scopeLevel(b.scope)) || _byCount(a, b); }
 function getTagDef(name) { return tagDefs.find(d => d.name === name) || null; }
 
 function getTagCounts() {
@@ -31,7 +40,7 @@ function getAllTags() {
     counts.forEach((n, name) => { if (!getTagDef(name)) out.push({ name, scope: TAG_COMMON, fav: false, count: n, registered: false }); });
     return out;
 }
-function getTagsForType(type) { return getAllTags().filter(t => t.scope === type || t.scope === TAG_COMMON); }
+function getTagsForCategory(cat) { return getAllTags().filter(t => isTagVisibleFor(t, cat)); }
 function _byCount(a, b) { return (b.count - a.count) || a.name.localeCompare(b.name, 'ja'); }
 
 function createTagDef(name, scope) {
@@ -82,7 +91,7 @@ function renderTagSection(m) {
     if (!selBox || !favBox) return;
     const sel = _modalTags(m);
     selBox.innerHTML = sel.map(t => `<span class="tag-chip-sel">#${escapeHtml(t)}<button type="button" class="tag-chip-x" data-tag-remove="${escapeHtml(t)}" data-tag-mode="${m}" aria-label="外す">✕</button></span>`).join('');
-    const favs = getTagsForType(_modalType(m)).filter(t => t.fav && !sel.includes(t.name));
+    const favs = getTagsForCategory(_modalCat(m)).filter(t => t.fav && !sel.includes(t.name)).sort(_byLevel);
     favBox.innerHTML = favs.length ? `<span class="tag-fav-mark" aria-hidden="true">☆</span>` + favs.map(t => `<button type="button" class="tag-chip-fav" data-tag-add="${escapeHtml(t.name)}" data-tag-mode="${m}">${escapeHtml(t.name)}</button>`).join('') : '';
     favBox.style.display = favs.length ? '' : 'none';
     renderTagSuggest(m);
@@ -90,16 +99,16 @@ function renderTagSection(m) {
 
 // 入力中の候補（入力欄の上に重ねて出す。下の要素は動かさない）
 function _suggestItems(m, q) {
-    const type = _modalType(m);
+    const cat = _modalCat(m);
     const sel = _modalTags(m);
     const all = getAllTags();
-    const visible = all.filter(t => t.scope === type || t.scope === TAG_COMMON);
-    const others = all.filter(t => !(t.scope === type || t.scope === TAG_COMMON));
-    const hit = arr => arr.filter(t => t.name.includes(q)).sort((a, b) => ((b.name === q) - (a.name === q)) || _byCount(a, b));
+    const visible = all.filter(t => isTagVisibleFor(t, cat));
+    const others = all.filter(t => !isTagVisibleFor(t, cat));
+    const hit = arr => arr.filter(t => t.name.includes(q)).sort((a, b) => ((b.name === q) - (a.name === q)) || _byLevel(a, b));
     const items = hit(visible).slice(0, 6).map(t => ({ kind: 'use', t }));
     hit(others).slice(0, 3).forEach(t => items.push({ kind: 'use', t, other: true }));
     const exists = all.some(t => t.name === q);
-    if (!exists) items.push({ kind: 'new', name: q, type });
+    if (!exists) items.push({ kind: 'new', name: q, cat, type: getLogCategoryType(cat) });
     return { items, sel };
 }
 function renderTagSuggest(m) {
@@ -114,11 +123,16 @@ function renderTagSuggest(m) {
         const act = i === _tagSuggestIndex[m] ? ' is-active' : '';
         if (it.kind === 'use') {
             const added = sel.includes(it.t.name);
-            return `<button type="button" class="tag-sg-row${act}" data-tag-add="${escapeHtml(it.t.name)}" data-tag-mode="${m}"><span>#${escapeHtml(it.t.name)}${added ? '<span class="tag-sg-note">追加済み</span>' : ''}</span><span class="tag-sg-meta">${it.other ? '他のタイプ・' : ''}${escapeHtml(tagScopeLabel(it.t.scope))}・${it.t.count}件</span></button>`;
+            return `<button type="button" class="tag-sg-row${act}" data-tag-add="${escapeHtml(it.t.name)}" data-tag-mode="${m}"><span>#${escapeHtml(it.t.name)}${added ? '<span class="tag-sg-note">追加済み</span>' : ''}</span><span class="tag-sg-meta"><span class="tag-level">${it.other ? '他・' : ''}${escapeHtml(tagScopeLabel(it.t.scope))}</span>${it.t.count}件</span></button>`;
         }
-        return `<div class="tag-sg-row tag-sg-new${act}"><span>＋「${escapeHtml(it.name)}」を新しく作る</span><span class="tag-sg-scopes"><button type="button" class="tag-scope-btn" data-tag-new="${escapeHtml(it.name)}" data-tag-scope="${escapeHtml(it.type)}" data-tag-mode="${m}">${escapeHtml(it.type)}のタグ</button><button type="button" class="tag-scope-btn" data-tag-new="${escapeHtml(it.name)}" data-tag-scope="${TAG_COMMON}" data-tag-mode="${m}">共通のタグ</button></span></div>`;
+        return `<div class="tag-sg-row tag-sg-new${act}"><span>＋「${escapeHtml(it.name)}」を新しく作る</span><span class="tag-sg-scopes">${_scopeButtonsHtml(it.cat, it.type, b => `data-tag-new="${escapeHtml(it.name)}" data-tag-scope="${escapeHtml(b)}" data-tag-mode="${m}"`)}</span></div>`;
     }).join('');
     box.classList.add('open');
+}
+// 新しく作るときの3つの選択肢（狭い順）
+function _scopeButtonsHtml(cat, type, attrs) {
+    return [[catScope(cat), `${cat}だけ`], [type, `${type}全体`], [TAG_COMMON, '共通']]
+        .map(([s, label]) => `<button type="button" class="tag-scope-btn" ${attrs(s)}>${escapeHtml(label)}</button>`).join('');
 }
 function handleTagInput(m) { _tagSuggestIndex[m] = 0; renderTagSuggest(m); }
 function handleTagInputKeydown(e, m) {
@@ -141,7 +155,7 @@ function handleTagInputKeydown(e, m) {
         const it = items[_tagSuggestIndex[m]] || items[0];
         if (!it) return;
         if (it.kind === 'use') addTagToModal(m, it.t.name);
-        else createTagFromModal(m, it.name, it.type); // Enter で作るときは、今のタイプのタグ
+        else createTagFromModal(m, it.name, catScope(it.cat)); // Enter で作るときは、一番狭い「このカテゴリだけ」
     } else if (e.key === 'Escape') {
         e.preventDefault(); e.stopPropagation();
         inp.value = ''; renderTagSuggest(m);
@@ -210,21 +224,23 @@ function renderTagPicker() {
     const box = document.getElementById('tagPickerList');
     const m = _tagPickerMode;
     if (!box || !m) return;
+    const cat = _modalCat(m);
     const type = _modalType(m);
     const lab = document.getElementById('tagPickerType');
-    if (lab) lab.textContent = `${type} ＋ 共通`;
+    if (lab) lab.textContent = `${cat} ／ ${type} ／ 共通`;
     const sel = _modalTags(m);
     const q = _tagPickerQuery;
     const all = getAllTags().filter(t => !q || t.name.includes(q));
-    const vis = all.filter(t => t.scope === type || t.scope === TAG_COMMON);
-    const row = t => `<div class="tag-pk-row${sel.includes(t.name) ? ' is-on' : ''}" onclick="toggleTagFromPicker(this.dataset.name)" data-name="${escapeHtml(t.name)}"><button type="button" class="tag-pk-star${t.fav ? ' is-fav' : ''}" onclick="toggleTagFavFromPicker(event, this.parentNode.dataset.name)" aria-label="${t.fav ? 'お気に入りから外す' : 'お気に入りにする'}">${t.fav ? '★' : '☆'}</button><span class="tag-pk-name">#${escapeHtml(t.name)}</span><span class="tag-pk-count">${t.count}件</span><span class="tag-pk-check">${sel.includes(t.name) ? '✓' : ''}</span></div>`;
+    const vis = all.filter(t => isTagVisibleFor(t, cat));
+    const row = t => `<div class="tag-pk-row${sel.includes(t.name) ? ' is-on' : ''}" onclick="toggleTagFromPicker(this.dataset.name)" data-name="${escapeHtml(t.name)}"><button type="button" class="tag-pk-star${t.fav ? ' is-fav' : ''}" onclick="toggleTagFavFromPicker(event, this.parentNode.dataset.name)" aria-label="${t.fav ? 'お気に入りから外す' : 'お気に入りにする'}">${t.fav ? '★' : '☆'}</button><span class="tag-pk-name">#${escapeHtml(t.name)}</span><span class="tag-level">${escapeHtml(tagScopeLabel(t.scope))}</span><span class="tag-pk-count">${t.count}件</span><span class="tag-pk-check">${sel.includes(t.name) ? '✓' : ''}</span></div>`;
     const sec = (title, arr) => arr.length ? `<div class="tag-pk-sec">${escapeHtml(title)}</div>` + arr.map(row).join('') : '';
-    let html = sec('お気に入り', vis.filter(t => t.fav))
-        + sec(`${type}のタグ`, vis.filter(t => !t.fav && t.scope === type).sort(_byCount))
+    let html = sec('お気に入り', vis.filter(t => t.fav).sort(_byLevel))
+        + sec(`${cat}のタグ`, vis.filter(t => !t.fav && t.scope === catScope(cat)).sort(_byCount))
+        + sec(`${type}全体のタグ`, vis.filter(t => !t.fav && t.scope === type).sort(_byCount))
         + sec('共通のタグ', vis.filter(t => !t.fav && t.scope === TAG_COMMON).sort(_byCount));
-    if (q) html += sec('他のタイプのタグ', all.filter(t => !(t.scope === type || t.scope === TAG_COMMON)).sort(_byCount));
+    if (q) html += sec('ほかのカテゴリ・タイプのタグ', all.filter(t => !isTagVisibleFor(t, cat)).sort(_byLevel));
     if (q && !getAllTags().some(t => t.name === q)) {
-        html += `<div class="tag-pk-new"><span>＋「${escapeHtml(q)}」を新しく作る</span><span class="tag-sg-scopes"><button type="button" class="tag-scope-btn" onclick="createTagFromPicker(this.dataset.n, this.dataset.s)" data-n="${escapeHtml(q)}" data-s="${escapeHtml(type)}">${escapeHtml(type)}のタグ</button><button type="button" class="tag-scope-btn" onclick="createTagFromPicker(this.dataset.n, this.dataset.s)" data-n="${escapeHtml(q)}" data-s="${TAG_COMMON}">共通のタグ</button></span></div>`;
+        html += `<div class="tag-pk-new"><span>＋「${escapeHtml(q)}」を新しく作る</span><span class="tag-sg-scopes">${_scopeButtonsHtml(cat, type, s => `onclick="createTagFromPicker(this.dataset.n, this.dataset.s)" data-n="${escapeHtml(q)}" data-s="${escapeHtml(s)}"`)}</span></div>`;
     }
     if (!html) html = `<div class="tag-pk-empty">${q ? '見つかりません' : 'まだタグがありません。上の欄に名前を入れると作れます'}</div>`;
     box.innerHTML = html;
@@ -313,14 +329,19 @@ function renderSettingsTagList() {
     const cnt = document.getElementById('tagCountIndicator');
     if (cnt) cnt.textContent = `${all.length}件`;
     const scopeSel = document.getElementById('newTagScope');
-    const scopes = [TAG_COMMON].concat(appTypes);
-    const opts = cur => scopes.map(s => `<option value="${escapeHtml(s)}" ${s === cur ? 'selected' : ''}>${escapeHtml(tagScopeLabel(s))}</option>`).join('');
+    // 範囲の並び：共通 → タイプごとに「タイプ全体」とその中のカテゴリ
+    const tree = appTypes.map(ty => ({ ty, cats: categories.filter(c => (c.type || '一般') === ty).map(c => c.name) }));
+    const scopes = [TAG_COMMON];
+    tree.forEach(g => { scopes.push(g.ty); g.cats.forEach(c => scopes.push(catScope(c))); });
+    const opt = (s, cur, label) => `<option value="${escapeHtml(s)}" ${s === cur ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    const opts = cur => opt(TAG_COMMON, cur, '共通') + tree.map(g => `<optgroup label="${escapeHtml(g.ty)}">${opt(g.ty, cur, g.ty + '全体')}${g.cats.map(c => opt(catScope(c), cur, c)).join('')}</optgroup>`).join('')
+        + (cur && !scopes.includes(cur) ? opt(cur, cur, tagScopeLabel(cur) + '（なし）') : '');
     if (scopeSel) { const v = scopeSel.value; scopeSel.innerHTML = opts(scopes.includes(v) ? v : TAG_COMMON); }
     if (!all.length) { box.innerHTML = '<div class="tag-pk-empty">まだタグがありません。追記画面のタグ欄か、下の欄から作れます</div>'; return; }
     const groups = scopes.map(s => ({ s, list: all.filter(t => t.scope === s).sort(_byCount) }))
-        .concat([{ s: null, list: all.filter(t => !scopes.includes(t.scope)).sort(_byCount) }]) // 削除されたタイプ名が残っている場合
+        .concat([{ s: null, list: all.filter(t => !scopes.includes(t.scope)).sort(_byCount) }]) // 削除されたタイプ・カテゴリ名が残っている場合
         .filter(g => g.list.length);
-    box.innerHTML = groups.map(g => `<div class="tag-set-group"><div class="tag-set-head">${g.s === null ? 'その他' : (g.s === TAG_COMMON ? '共通のタグ' : escapeHtml(g.s) + ' のタグ')}</div>` + g.list.map(t => `
+    box.innerHTML = groups.map(g => `<div class="tag-set-group"><div class="tag-set-head">${g.s === null ? 'その他' : (g.s === TAG_COMMON ? '共通のタグ' : (scopeCat(g.s) !== null ? '　' + escapeHtml(scopeCat(g.s)) + 'のタグ' : escapeHtml(g.s) + '全体のタグ'))}</div>` + g.list.map(t => `
         <div class="tag-set-row" data-name="${escapeHtml(t.name)}">
             <button type="button" class="tag-pk-star${t.fav ? ' is-fav' : ''}" onclick="toggleTagFav(this.parentNode.dataset.name); renderSettingsTagList();" aria-label="お気に入り">${t.fav ? '★' : '☆'}</button>
             <span class="tag-set-name">#${escapeHtml(t.name)}</span>
@@ -394,7 +415,7 @@ function commitPendingTagInput(m) {
     const inp = document.getElementById(m + 'TagInput');
     const q = normalizeTagName(inp ? inp.value : '');
     if (!q) return;
-    if (!getAllTags().some(t => t.name === q)) createTagDef(q, _modalType(m));
+    if (!getAllTags().some(t => t.name === q)) createTagDef(q, catScope(_modalCat(m)));
     if (!_modalTags(m).includes(q)) _setModalTags(m, _modalTags(m).concat([q]));
     inp.value = '';
 }

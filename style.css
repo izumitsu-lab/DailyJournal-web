@@ -2092,3 +2092,11 @@ body.light-theme .tag-chip-fav { border-color: rgba(0, 0, 0, 0.2); }
 .tag-set-row { display: flex; align-items: center; gap: 6px; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 12px; padding: 5px 6px; font-size: 13px; }
 .tag-set-name { flex: 1; min-width: 0; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag-set-row .category-item-type-select { max-width: 96px; }
+
+.tag-level { font-size: 10.5px; font-weight: 600; color: var(--text-secondary); border: 1px solid var(--item-border); border-radius: 5px; padding: 0 5px; margin-right: 5px; white-space: nowrap; }
+.tag-pk-row .tag-level { margin-right: 0; }
+.tag-set-row .category-item-type-select { max-width: 110px; }
+.tag-set-row { gap: 4px; }
+.tag-set-name { min-width: 4.5em; }
+.tag-set-row .category-item-type-select { max-width: 86px; padding: 4px 4px; }
+.tag-set-row .settings-icon-btn { padding: 4px 3px; }

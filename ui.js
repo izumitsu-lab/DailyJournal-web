@@ -1850,6 +1850,8 @@ function addNewCategory() {
 function deleteCategory(i) {
     const t = categories[i]; if (!confirm(`「${t.name}」を削除しますか？`)) return;
     categories.splice(i, 1); saveCategories();
+    // そのカテゴリだけのタグは、タイプ全体のタグにする（タグ自体は消さない）
+    if (tagDefs.some(d => d.scope === 'cat:' + t.name)) { tagDefs.forEach(d => { if (d.scope === 'cat:' + t.name) d.scope = t.type || '一般'; }); saveTagDefs(); }
     if (currentFilter.mode === 'category' && currentFilter.value === t.name) { currentFilter = { mode: 'all', value: '' }; updateCategoryButtonUI(); }
     else if (currentFilter.mode === 'type' && !categories.some(c => (c.type || "一般") === currentFilter.value)) { currentFilter = { mode: 'all', value: '' }; updateCategoryButtonUI(); }
     renderSettingsCategoryList(); 

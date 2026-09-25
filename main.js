@@ -18,7 +18,7 @@ window.addEventListener('orientationchange', () => {
 updateAppHeight();
 
 // アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
-const APP_VERSION = '2026.09.25-4';
+const APP_VERSION = '2026.09.25-5';
 function applyAppVersionLabel() {
     const el = document.getElementById('appVersionLabel');
     if (!el) return;
@@ -965,6 +965,11 @@ async function renameCategory(oldName, newName) {
 
     if (currentFilter.mode === 'category' && currentFilter.value === oldName) {
         currentFilter.value = newName;
+    }
+    // そのカテゴリだけのタグも付け替える
+    if (tagDefs.some(d => d.scope === 'cat:' + oldName)) {
+        tagDefs.forEach(d => { if (d.scope === 'cat:' + oldName) d.scope = 'cat:' + newName; });
+        saveTagDefs();
     }
     if (selectedAddCategory === oldName) selectedAddCategory = newName;
     if (selectedEditCategory === oldName) selectedEditCategory = newName;
