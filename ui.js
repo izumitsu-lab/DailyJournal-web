@@ -633,7 +633,8 @@ function updateCategoryButtonUI() {
 
 function switchSettingsTab(t) {
     // ★ 'cloud' タブを配列に追加しました
-    ['general', 'types', 'categories', 'data', 'cloud', 'sync'].forEach(p => {
+    if (t === 'tags' && typeof renderSettingsTagList === 'function') renderSettingsTagList();
+    ['general', 'types', 'categories', 'tags', 'data', 'cloud', 'sync'].forEach(p => {
         const b = document.getElementById('tabBtn' + p.charAt(0).toUpperCase() + p.slice(1));
         const e = document.getElementById('settingsPage' + p.charAt(0).toUpperCase() + p.slice(1));
         if (b) b.classList.toggle('active', p === t); 
@@ -645,7 +646,7 @@ function openViewScopeModal() { updateViewScopeModalUI(); openModal('viewScopeMo
 function updateViewScopeModalUI() {
     ['day', 'week', 'month', 'photo'].forEach(s => {
         const i = document.getElementById(`scopeItem_${s}`);
-        if (i) i.classList.toggle('selected', calendarScope === s && !showPinnedList);
+        if (i) i.classList.toggle('selected', calendarScope === s && !showPinnedList && !showTagView);
     });
     const pinItem = document.getElementById('scopeItem_pins');
     if (pinItem) pinItem.classList.toggle('selected', showPinnedList && calendarScope !== 'notebooks');
@@ -667,7 +668,7 @@ function updateViewScopeModalUI() {
 function selectScopeFromModal(s) { setCalendarScope(s); closeModal('viewScopeModal'); }
 
 function setCalendarScope(scope) {
-    showPinnedList = false;
+    showPinnedList = false; showTagView = null;
     saveCurrentScrollPositions();
     triggerSmoothViewSwitch(() => {
         if (['day', 'week', 'month', 'photo'].includes(calendarScope)) {
@@ -701,8 +702,10 @@ function updateScopeButtonsUI() {
     const bPhoto = document.getElementById('btnScopePhoto');
     const bPins = document.getElementById('btnScopePins');
     const pinOn = !!showPinnedList && calendarScope !== 'notebooks';
+    const tagOn = !!showTagView && calendarScope !== 'notebooks';
     // サイドバーの一覧は「表示ビューの切り替え」と同じ見た目（選択中は selected）
-    [[bDay, !pinOn && calendarScope === 'day'], [bWeek, !pinOn && calendarScope === 'week'], [bMonth, !pinOn && calendarScope === 'month'], [bPhoto, !pinOn && calendarScope === 'photo'], [bPins, pinOn]]
+    const plain = !pinOn && !tagOn;
+    [[bDay, plain && calendarScope === 'day'], [bWeek, plain && calendarScope === 'week'], [bMonth, plain && calendarScope === 'month'], [bPhoto, plain && calendarScope === 'photo'], [bPins, pinOn]]
         .forEach(([el, on]) => { if (el) { el.classList.toggle('active', on); el.classList.toggle('selected', on); el.setAttribute('aria-current', on ? 'true' : 'false'); } });
 
     const isNbEnabled = isNotebookEnabledForCurrentFilter();
@@ -716,6 +719,7 @@ function updateScopeButtonsUI() {
     if (v && si && sl) {
         v.className = 'bar-btn'; 
         if (showPinnedList && calendarScope !== 'notebooks') { si.textContent = '🔖'; sl.textContent = 'しおり'; v.classList.add('active-scope'); }
+        else if (showTagView && calendarScope !== 'notebooks') { si.textContent = '🏷️'; sl.textContent = 'タグ'; v.classList.add('active-scope'); }
         else if (calendarScope === 'day') { si.textContent = '☀️'; sl.textContent = '日表示'; }
         else if (calendarScope === 'week') { si.textContent = '🗓️'; sl.textContent = '週表示'; v.classList.add('active-scope'); }
         else if (calendarScope === 'month') { si.textContent = '🌙'; sl.textContent = '月表示'; v.classList.add('active-scope'); }
@@ -888,8 +892,8 @@ function jumpToDateInstant(dk) {
     c.style.opacity = '0';
 
     if (journalSearchQuery) { journalSearchQuery = ''; ['journalSearchInput', 'fsJournalSearchInput'].forEach(i => { const el = document.getElementById(i); if (el) el.value = ''; }); ['journalSearchClearBtn', 'fsJournalSearchClearBtn'].forEach(i => { const el = document.getElementById(i); if (el) el.classList.remove('active'); }); }
-    const wasOverlay = showPinnedList || !c.querySelector('.card-carousel-panel[data-key]');
-    if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); }
+    const wasOverlay = showPinnedList || showTagView || !c.querySelector('.card-carousel-panel[data-key]');
+    if (showPinnedList || showTagView) { showPinnedList = false; showTagView = null; updateScopeButtonsUI(); }
     activeDateKey = dk; lastJournalDateKey = dk;
     if (!dateList.includes(dk)) { dateList.push(dk); dateList.sort(); }
 
@@ -1026,7 +1030,7 @@ function createLogItemHtml(log, dateStr, originalIndex) {
     else if (sType === 'outgoing') cHtml = `<div class="chat-bubble-card outgoing"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
     else cHtml = `<div class="log-content">${parseLinksAndText(log.text)}</div>`;
 
-    return `<li class="log-item${log.backdated ? ' is-backdated' : ''}${log.pinned ? ' is-pinned' : ''}" id="logItem_${dateStr}_${log.id}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${cHtml}${pHtml}</li>`;
+    return `<li class="log-item${log.backdated ? ' is-backdated' : ''}${log.pinned ? ' is-pinned' : ''}" id="logItem_${dateStr}_${log.id}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${cHtml}${pHtml}${logTagsHtml(log)}</li>`;
 }
 
 function getFilteredDayLogs(dStr) {
@@ -1057,6 +1061,11 @@ function renderRightCards() {
     
     if (calendarScope !== 'notebooks' && showPinnedList) {
         renderPinnedListCard();
+        updateSidebarReopenButtons();
+        return;
+    }
+    if (calendarScope !== 'notebooks' && showTagView && typeof renderTagListCard === 'function') {
+        renderTagListCard(showTagView);
         updateSidebarReopenButtons();
         return;
     }
@@ -1097,8 +1106,9 @@ function renderJournalSearchResultsCard(query) {
             const catMatch = (log.category || '').toLowerCase().includes(q);
             const typeMatch = getLogCategoryType(log.category || '').toLowerCase().includes(q);
             const slackMatch = (sType === 'incoming' && "受信slack相手".includes(q)) || (sType === 'outgoing' && "送信slack自分".includes(q));
+            const tagMatch = (log.tags || []).some(t => ('#' + t).toLowerCase().includes(q));
 
-            if (textMatch || catMatch || typeMatch || slackMatch) {
+            if (textMatch || catMatch || typeMatch || slackMatch || tagMatch) {
                 matches.push({ dateStr: dStr, log: log, index: idx });
             }
         });
@@ -1216,7 +1226,7 @@ function renderPhotoJournalCarousel() {
 
         const panelKey = `photo_${dateStr}_${log.id}`;
         const p = document.createElement('div'); p.className = 'card-carousel-panel'; p.dataset.key = panelKey; p.dataset.date = dateStr;
-        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer${log.pinned ? ' is-pinned' : ''}"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${mb}</div></div>`;
+        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer${log.pinned ? ' is-pinned' : ''}"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${mb}${logTagsHtml(log)}</div></div>`;
         container.appendChild(p);
     });
 
@@ -1375,11 +1385,13 @@ function renderModalCategoryChips(mode, cSel) {
         });
         r.appendChild(w); c.appendChild(r);
     });
+    if (typeof renderTagSection === 'function') renderTagSection(mode);
 }
 
 function openAddModal() {
     _addSlot = null; refreshAddSlotUI();
     document.getElementById('journalInputText').value = "";
+    currentAddTags = []; const _ti = document.getElementById('addTagInput'); if (_ti) _ti.value = '';
     
     if (currentFilter.mode === 'category' && categories.some(c => c.name === currentFilter.value)) selectedAddCategory = currentFilter.value;
     else if (currentFilter.mode === 'type') { const f = categories.find(c => (c.type || "一般") === currentFilter.value); selectedAddCategory = f ? f.name : "ライフログ"; }
@@ -1402,6 +1414,7 @@ function openEditModal(dStr, id) {
     currentEditTarget = { dateStr: dStr, id: id };
     _editSlot = { date: dStr, time: log.time || '00:00' }; refreshEditSlotUI(); document.getElementById('editInputText').value = log.text || "";
     selectedEditCategory = log.category || "ライフログ"; 
+    currentEditTags = Array.isArray(log.tags) ? [...log.tags] : []; const _ti = document.getElementById('editTagInput'); if (_ti) _ti.value = '';
     renderModalCategoryChips('edit', selectedEditCategory);
     const m = log.slackType || (log.isSlack ? 'incoming' : 'normal'); 
     setMessageType('edit', m); 
@@ -1437,6 +1450,7 @@ async function saveNewLog() {
     if (!journalData[dStr]) journalData[dStr] = [];
     
     const sA = isSlackEnabledForType(getLogCategoryType(selectedAddCategory));
+    commitPendingTagInput('add'); // タグ欄に打ちかけの文字があれば、タグとして付ける
 
     journalData[dStr].push({ 
         id: generateId('lg_'),
@@ -1446,8 +1460,10 @@ async function saveNewLog() {
         slackType: (sA && currentAddMsgType !== 'normal') ? currentAddMsgType : null, 
         images: [...currentAddPhotos],
         writtenAt: new Date().toISOString(),
-        ...(late ? { backdated: true } : {})
+        ...(late ? { backdated: true } : {}),
+        ...(currentAddTags.length ? { tags: [...currentAddTags] } : {})
     });
+    currentAddTags = [];
     _addSlot = null;
     
     await saveJournalData();
@@ -1481,6 +1497,8 @@ async function saveEditedLog() {
     delete target.isSlack;
     target.images = [...currentEditPhotos]; 
     delete target.image;
+    commitPendingTagInput('edit');
+    if (currentEditTags.length) target.tags = [...currentEditTags]; else delete target.tags;
 
     // 日時の変更：後日記入の印を付け（外せない）、実際に書いた日時を残す
     let movedTo = null;
@@ -1963,7 +1981,7 @@ function renderGlobalSearchResults(query) {
             if (rf.photo && !nImg) return;
             if (rf.pin && !l.pinned) return;
             const sT = l.slackType || (l.isSlack ? 'incoming' : null);
-            const textContent = `${l.text || ''} ${l.category || ''} ${getLogCategoryType(l.category || '')} ${sT === 'incoming' ? '受信 slack 相手' : sT === 'outgoing' ? '送信 slack 自分' : ''}`;
+            const textContent = `${l.text || ''} ${l.category || ''} ${getLogCategoryType(l.category || '')} ${sT === 'incoming' ? '受信 slack 相手' : sT === 'outgoing' ? '送信 slack 自分' : ''} ${(l.tags || []).map(t => '#' + t).join(' ')}`;
 
             if (matchesSearchTokens(textContent, tokens, operator)) {
                 journalMatches.push({
@@ -1975,7 +1993,8 @@ function renderGlobalSearchResults(query) {
                     slackType: sT,
                     index: l.id,
                     photos: nImg,
-                    pinned: !!l.pinned
+                    pinned: !!l.pinned,
+                    tags: l.tags || []
                 });
             }
         });
@@ -2058,6 +2077,7 @@ function renderGlobalSearchResults(query) {
                         </div>
                     </div>
                     <div class="search-result-text">${escapeHtml(item.text)}</div>
+                    ${item.tags && item.tags.length ? `<div class="search-result-tags">${item.tags.map(t => '#' + escapeHtml(t)).join('　')}</div>` : ''}
                 </div>
             `;
         } else if (item.type === 'notebook') {
@@ -2141,7 +2161,7 @@ function changeSearchRange() {
 }
 
 function jumpFromGlobalSearchToDay(dateStr, targetLogIndex = null) {
-    showPinnedList = false;
+    showPinnedList = false; showTagView = null;
     closeModal('searchModal');
     if (journalSearchQuery) clearJournalSearch();
 
@@ -2207,7 +2227,7 @@ function generateDayHtmlDocument(dStr, logs) {
         if (sT === 'incoming') cH = `<div style="background: rgba(175, 82, 222, 0.06); border-radius: 12px; padding: 12px 14px; margin-top: 4px;"><div style="font-size: 11px; font-weight: 700; color: #af52de; margin-bottom: 4px;">💬 ${escapeHtml(l.category || 'ライフログ')} からのメッセージ</div><div style="font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">${parseLinksAndText(l.text)}</div></div>`;
         else if (sT === 'outgoing') cH = `<div style="background: rgba(41, 151, 255, 0.06); border-radius: 12px; padding: 12px 14px; margin-top: 4px;"><div style="font-size: 11px; font-weight: 700; color: #2997ff; margin-bottom: 4px;">💬 あなた → ${escapeHtml(l.category || 'ライフログ')} への送信</div><div style="font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;">${parseLinksAndText(l.text)}</div></div>`;
         else cH = `<div class="content">${parseLinksAndText(l.text)}</div>`;
-        h += `<div class="log-item"><div style="display:flex; gap:6px; align-items:center;"><span class="time">${l.time}</span><span class="cat">${escapeHtml(l.category || 'ライフログ')}</span>${l.backdated ? '<span class="cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : ''}${l.pinned ? '<span class="cat" style="background:none;">🔖</span>' : ''}</div>${cH}${ih}</div>`;
+        h += `<div class="log-item"><div style="display:flex; gap:6px; align-items:center;"><span class="time">${l.time}</span><span class="cat">${escapeHtml(l.category || 'ライフログ')}</span>${l.backdated ? '<span class="cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : ''}${l.pinned ? '<span class="cat" style="background:none;">🔖</span>' : ''}</div>${cH}${ih}${(l.tags && l.tags.length) ? `<div style="font-size:12px;color:var(--text-secondary);">${l.tags.map(t => '#' + escapeHtml(t)).join('　')}</div>` : ''}</div>`;
     });
     return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${fd} - Daily Journal</title><style>:root { color-scheme: light dark; --bg: #08080a; --card-bg: #121215; --item-bg: #1a1a1f; --border: rgba(255, 255, 255, 0.08); --text-primary: #ffffff; --text-secondary: #98989f; --accent: #2997ff; --accent-soft: rgba(41, 151, 255, 0.15); } @media (prefers-color-scheme: light) { :root { --bg: #f2f2f7; --card-bg: #ffffff; --item-bg: #f8f8fa; --border: rgba(0, 0, 0, 0.08); --text-primary: #1c1c1e; --text-secondary: #8e8e93; --accent: #007aff; --accent-soft: rgba(0, 122, 255, 0.12); } } * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; } body { background-color: var(--bg); color: var(--text-primary); padding: 30px 16px; display: flex; justify-content: center; } .container { width: 100%; max-width: 640px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 24px; padding: 28px; } header { margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px; } .eyebrow { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.5px; } h1 { font-size: 24px; font-weight: 700; margin-top: 4px; } .log-list { display: flex; flex-direction: column; gap: 14px; } .log-item { background: var(--item-bg); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; } .time { font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 8px; } .cat { font-size: 11px; font-weight: 700; background: rgba(128,128,128,0.2); padding: 2px 8px; border-radius: 8px; } .content { font-size: 16px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; } .journal-link { color: var(--accent); text-decoration: none; font-weight: 600; padding: 1px 6px; margin: 0 2px; background: var(--accent-soft); border-radius: 6px; display: inline-flex; align-items: center; gap: 3px; word-break: break-all; }</style></head><body><div class="container"><header><div class="eyebrow">${dStr}</div><h1>${fd}</h1></header><div class="log-list">${h}</div></div></body></html>`;
 }
@@ -2551,6 +2571,7 @@ async function exportArchiveHtml() {
             return '<div class="log-item">' +
                 '<div class="log-meta"><span class="log-time">' + (l.time || '') + '</span><span class="log-cat">' + escapeHtml(l.category || 'ライフログ') + '</span>' + (l.backdated ? '<span class="log-cat" style="background:none;opacity:.7;">✎ 後日記入</span>' : '') + (l.pinned ? '<span class="log-cat" style="background:none;">🔖</span>' : '') + '</div>' +
                 bodyHtml + imgHtml +
+                ((l.tags && l.tags.length) ? '<div style="font-size:12px;color:var(--text-secondary);">' + l.tags.map(t => '#' + escapeHtml(t)).join('　') + '</div>' : '') +
                 '</div>';
         }
 
@@ -2723,7 +2744,7 @@ async function executeBatchHtmlExport() {
 // data: URI はサイズ上限があり、写真が多いと書き出しに失敗するため Blob で書き出す
 async function exportData() {
     try {
-        const p = { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, hideEmptyCards, deviceDisplayMode, journalData: await getJournalDataForExport(), notebookData: await getNotebookDataForExport() };
+        const p = { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, hideEmptyCards, deviceDisplayMode, journalData: await getJournalDataForExport(), notebookData: await getNotebookDataForExport() };
         const blob = new Blob([JSON.stringify(p)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url;
@@ -2758,6 +2779,7 @@ function importData(e) {
                     if (imp.categories && Array.isArray(imp.categories)) { categories = imp.categories.filter(c => c && typeof c.name === 'string' && c.name.trim()).map(c => ({ name: c.name, type: typeof c.type === 'string' ? c.type : '一般' })); saveCategories(); }
                     if (imp.typeSlackSettings && typeof imp.typeSlackSettings === 'object') { typeSlackSettings = imp.typeSlackSettings; saveTypeSlackSettings(); }
                     if (imp.typeNotebookSettings && typeof imp.typeNotebookSettings === 'object') { typeNotebookSettings = imp.typeNotebookSettings; saveTypeNotebookSettings(); }
+                    if (Array.isArray(imp.tagDefs)) { sanitizeTagDefs(imp.tagDefs).forEach(d => { const ex = tagDefs.find(x => x.name === d.name); if (ex) Object.assign(ex, d); else tagDefs.push(d); }); saveTagDefs(); }
                     if (imp.typeHomeSettings && typeof imp.typeHomeSettings === 'object') { typeHomeSettings = {}; Object.keys(imp.typeHomeSettings).forEach(k => { if (imp.typeHomeSettings[k] === false) typeHomeSettings[k] = false; }); saveTypeHomeSettings(); }
                     if (typeof imp.hideEmptyCards === 'boolean') { hideEmptyCards = imp.hideEmptyCards; localStorage.setItem('daily_journal_hide_empty', hideEmptyCards); applyHideEmptyCardsSetting(); }
                     if (['auto', 'mobile', 'desktop'].includes(imp.deviceDisplayMode)) { deviceDisplayMode = imp.deviceDisplayMode; localStorage.setItem('daily_journal_device_mode', deviceDisplayMode); applyDeviceModeSetting(); }
@@ -3149,6 +3171,7 @@ function isLateOnlyDate(d) {
 // どの記録にも編集ボタンの左に薄いしおりがあり、タップで付け外しする。付けた記録は生成り色のカードになる。
 // 「表示ビュー > しおり」で、しおりを挟んだ記録だけを新しい順に見返せる。
 let showPinnedList = false;
+let showTagView = null; // タグの一覧を表示中なら、そのタグ名（tags.js）
 function pinIconSvg(on) {
     return `<svg width="15" height="15" viewBox="0 0 24 24" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg>`;
 }
@@ -3180,7 +3203,7 @@ function selectPinnedFromModal() {
             calendarScope = lastJournalScope || 'day';
             if (lastJournalDateKey) activeDateKey = lastJournalDateKey;
         }
-        showPinnedList = true;
+        showPinnedList = true; showTagView = null;
         if (journalSearchQuery) {
             journalSearchQuery = '';
             ['journalSearchInput', 'fsJournalSearchInput'].forEach(i => { const el = document.getElementById(i); if (el) el.value = ''; });
@@ -3369,9 +3392,9 @@ async function flushDrafts() {
     if (addOpen) {
         const text = document.getElementById('journalInputText').value;
         const photos = [...currentAddPhotos];
-        if (!text.trim() && !photos.length) _drafts.add = null;
+        if (!text.trim() && !photos.length && !currentAddTags.length) _drafts.add = null;
         else {
-            const snap = { text, category: selectedAddCategory, msgType: currentAddMsgType, slot: _addSlot ? { ..._addSlot } : null, photos: [], savedAt: now };
+            const snap = { text, category: selectedAddCategory, msgType: currentAddMsgType, slot: _addSlot ? { ..._addSlot } : null, photos: [], tags: [...currentAddTags], savedAt: now };
             _drafts.add = snap;
             jobs.push(_imagesToRefs(photos).then(r => { if (_drafts.add === snap) snap.photos = r; }));
         }
@@ -3382,8 +3405,8 @@ async function flushDrafts() {
         const { dateStr, id } = currentEditTarget;
         const log = findLogById(dateStr, id);
         const text = document.getElementById('editInputText').value;
-        const changed = log && (text !== (log.text || '') || selectedEditCategory !== (log.category || 'ライフログ'));
-        if (changed) _drafts.edit = { dateStr, id, text, category: selectedEditCategory, msgType: currentEditMsgType, savedAt: now };
+        const changed = log && (text !== (log.text || '') || selectedEditCategory !== (log.category || 'ライフログ') || JSON.stringify(currentEditTags) !== JSON.stringify(log.tags || []));
+        if (changed) _drafts.edit = { dateStr, id, text, category: selectedEditCategory, msgType: currentEditMsgType, tags: [...currentEditTags], savedAt: now };
         else if (_drafts.edit && _drafts.edit.id === id) _drafts.edit = null;
     }
 
@@ -3439,6 +3462,7 @@ function restoreModalDraft(m) {
         if (d.slot && d.slot.date) { _addSlot = { ...d.slot }; refreshAddSlotUI(); }
         currentAddPhotos = Array.isArray(d.photos) ? [...d.photos] : [];
         renderPhotoPreviews('add');
+        currentAddTags = sanitizeTagList(d.tags); renderTagSection('add');
         _setDraftBar('add', `書きかけを戻しました（${_fmtDraftTime(d.savedAt)}）`);
     } else {
         const d = _drafts.edit;
@@ -3450,6 +3474,7 @@ function restoreModalDraft(m) {
             updateMsgTypeVisibility('edit', selectedEditCategory);
         }
         setMessageType('edit', d.msgType || 'normal');
+        if (Array.isArray(d.tags)) { currentEditTags = sanitizeTagList(d.tags); renderTagSection('edit'); }
         _setDraftBar('edit', `編集途中の内容を戻しました（${_fmtDraftTime(d.savedAt)}）`);
     }
 }
@@ -3460,6 +3485,7 @@ function discardModalDraft(m) {
         _addSlot = null; refreshAddSlotUI();
         document.getElementById('journalInputText').value = '';
         currentAddPhotos = []; resetModalPhotoQuality('add'); renderPhotoPreviews('add');
+        currentAddTags = []; renderTagSection('add');
         setMessageType('add', 'normal');
     } else {
         const t = currentEditTarget;
@@ -3471,6 +3497,7 @@ function discardModalDraft(m) {
             renderModalCategoryChips('edit', selectedEditCategory);
             updateMsgTypeVisibility('edit', selectedEditCategory);
             setMessageType('edit', log.slackType || (log.isSlack ? 'incoming' : 'normal'));
+            currentEditTags = Array.isArray(log.tags) ? [...log.tags] : []; renderTagSection('edit');
         }
     }
     _setDraftBar(m, '');

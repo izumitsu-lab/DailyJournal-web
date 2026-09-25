@@ -129,7 +129,7 @@ function setupMiniCalSwipe() {
 // Journal 左サイドバー内検索処理
 // ==========================================
 function handleJournalSearchInput(e) {
-    if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); }
+    if (showPinnedList || showTagView) { showPinnedList = false; showTagView = null; updateScopeButtonsUI(); }
     journalSearchQuery = (e.target.value || '').trim();
     const clearBtn = document.getElementById('journalSearchClearBtn');
     if (clearBtn) clearBtn.classList.toggle('active', !!journalSearchQuery);
@@ -151,7 +151,7 @@ function clearJournalSearch() {
 function jumpToCurrentScopePeriod() {
     // Notebooksモード時は Gallery View（一覧）へ復帰
     if (calendarScope === 'notebooks') {
-        if (showPinnedList) { showPinnedList = false; updateScopeButtonsUI(); }
+        if (showPinnedList || showTagView) { showPinnedList = false; showTagView = null; updateScopeButtonsUI(); }
         if (journalSearchQuery) clearJournalSearch();
         if (notebookViewMode !== 'grid') {
             setNotebookViewMode('grid');
@@ -180,7 +180,7 @@ function jumpToCurrentScopePeriod() {
 }
 
 function jumpToDayFromTimeline(dStr) {
-    showPinnedList = false;
+    showPinnedList = false; showTagView = null;
     if (journalSearchQuery) {
         clearJournalSearch();
     }

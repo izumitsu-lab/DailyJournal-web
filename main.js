@@ -18,7 +18,7 @@ window.addEventListener('orientationchange', () => {
 updateAppHeight();
 
 // アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
-const APP_VERSION = '2026.09.25-3';
+const APP_VERSION = '2026.09.25-4';
 function applyAppVersionLabel() {
     const el = document.getElementById('appVersionLabel');
     if (!el) return;
@@ -51,6 +51,33 @@ let typeSlackSettings = JSON.parse(localStorage.getItem('daily_journal_type_slac
 let typeNotebookSettings = JSON.parse(localStorage.getItem('daily_journal_type_notebook')) || DEFAULT_TYPE_NOTEBOOK;
 // 「ホーム」に表示するタイプ（false のタイプはホームに出さない。「すべて表示」や、タイプ・カテゴリを選べば見られる）
 // 値がないタイプは表示扱い
+// タグの登録簿：[{ name, scope: 'common'（共通）またはタイプ名, fav: お気に入り }]
+// 記録には log.tags = ['収穫', ...]（名前）だけを持たせる。登録簿にない名前は「共通」扱い
+const TAG_COMMON = 'common';
+function normalizeTagName(s) {
+    if (typeof s !== 'string') return '';
+    return s.replace(/^[#＃\s]+/, '').replace(/[\s　]+/g, '').slice(0, 30);
+}
+function sanitizeTagList(arr) {
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const t of arr) { const n = normalizeTagName(t); if (n && !out.includes(n)) out.push(n); if (out.length >= 20) break; }
+    return out;
+}
+function sanitizeTagDefs(arr) {
+    if (!Array.isArray(arr)) return [];
+    const seen = new Set(), out = [];
+    for (const d of arr) {
+        if (!d || typeof d !== 'object') continue;
+        const name = normalizeTagName(d.name);
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        const scope = (typeof d.scope === 'string' && d.scope.trim() && d.scope.length <= 60) ? d.scope : TAG_COMMON;
+        out.push({ name, scope, fav: d.fav === true });
+    }
+    return out;
+}
+let tagDefs = (() => { try { return sanitizeTagDefs(JSON.parse(localStorage.getItem('daily_journal_tags') || '[]')); } catch (e) { return []; } })();
 let typeHomeSettings = (() => { try { const v = JSON.parse(localStorage.getItem('daily_journal_type_home')); return (v && typeof v === 'object') ? v : {}; } catch (e) { return {}; } })();
 
 // デフォルトで明るいテーマ（ライトテーマ）を有効化
@@ -408,6 +435,8 @@ function sanitizeLog(dateStr, raw, counter) {
     if (typeof raw.writtenAt === 'string' && !isNaN(Date.parse(raw.writtenAt))) log.writtenAt = new Date(Date.parse(raw.writtenAt)).toISOString();
     if (raw.backdated === true) log.backdated = true;
     if (raw.pinned === true) log.pinned = true; // しおり
+    const tags = sanitizeTagList(raw.tags);
+    if (tags.length) log.tags = tags; // タグ（ないときは項目自体を持たない）
     return log;
 }
 
@@ -840,6 +869,9 @@ function renameType(oldName, newName) {
         typeNotebookSettings[newName] = true;
     }
 
+    tagDefs.forEach(d => { if (d.scope === oldName) d.scope = newName; });
+    saveTagDefs();
+
     if (typeHomeSettings[oldName] !== undefined) {
         typeHomeSettings[newName] = typeHomeSettings[oldName];
         delete typeHomeSettings[oldName];
@@ -881,6 +913,9 @@ function deleteType(typeName) {
     delete typeSlackSettings[typeName];
     delete typeNotebookSettings[typeName];
     delete typeHomeSettings[typeName];
+    // そのタイプのタグは「共通」にする（タグ自体は消さない）
+    tagDefs.forEach(d => { if (d.scope === typeName) d.scope = TAG_COMMON; });
+    saveTagDefs();
 
     if (currentFilter.mode === 'type' && currentFilter.value === typeName) {
         currentFilter = { mode: 'all', value: '' };
@@ -1032,6 +1067,7 @@ async function _syncAndMigrateCategoriesInner() {
 function saveCategories() { if (_tabInactive) return; localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); markSettingsEdited(); }
 function saveTypeSlackSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); markSettingsEdited(); }
 function saveTypeNotebookSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); markSettingsEdited(); }
+function saveTagDefs() { if (_tabInactive) return; localStorage.setItem('daily_journal_tags', JSON.stringify(tagDefs)); markSettingsEdited(); }
 function saveTypeHomeSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_home', JSON.stringify(typeHomeSettings)); markSettingsEdited(); }
 function isTypeShownOnHome(type) { return typeHomeSettings[type] !== false; }
 function getHomeHiddenTypes() { return appTypes.filter(t => !isTypeShownOnHome(t)); }

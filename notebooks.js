@@ -206,7 +206,7 @@ function setNotebookViewMode(mode, targetIndex = null) {
 
 // 下部メニューの「表示ビュー切り替え」から Notebooks の Gallery/Card/Graph を直接選択
 function selectNotebookViewFromModal(mode) {
-    showPinnedList = false;
+    showPinnedList = false; showTagView = null;
     if (graphAnimId) {
         cancelAnimationFrame(graphAnimId);
         graphAnimId = null;

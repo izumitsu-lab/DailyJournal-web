@@ -752,6 +752,8 @@ function sanitizeSettingsData(s) {
         out.typeHomeSettings = {};
         for (const k of Object.keys(h)) if (h[k] === false) out.typeHomeSettings[k] = false;
     }
+    // タグの登録簿。以前の版の端末が送った設定にはこの項目がない
+    if (Array.isArray(s.tagDefs)) out.tagDefs = sanitizeTagDefs(s.tagDefs);
     out._editedAt = typeof s._editedAt === 'string' ? s._editedAt : '';
     return out;
 }
@@ -776,11 +778,12 @@ function _saveSettingsBase(s) {
         appTypes: s.appTypes || [], categories: s.categories || [],
         typeSlackSettings: s.typeSlackSettings || {}, typeNotebookSettings: s.typeNotebookSettings || {},
         typeHomeSettings: s.typeHomeSettings || {},
+        tagDefs: s.tagDefs || [],
         _editedAt: s._editedAt || ''
     }));
 }
 function _currentSettings() {
-    return sanitizeSettingsData({ appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, _editedAt: getSettingsEditedAt() });
+    return sanitizeSettingsData({ appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, _editedAt: getSettingsEditedAt() });
 }
 
 // 並び順付きの一覧（タイプ名 / カテゴリ）のマージ。keyOf で同一項目を判定し、pick で中身を選ぶ
@@ -857,6 +860,10 @@ function _mergeSettings(base, local, remote) {
         typeHomeSettings: remote.typeHomeSettings
             ? _mergeBoolMap(base && base.typeHomeSettings, local.typeHomeSettings, remote.typeHomeSettings)
             : Object.assign({}, local.typeHomeSettings || {}),
+        // タグ：名前ごとに、この端末で変えたもの（追加・お気に入り・タイプの付け替え）を優先
+        tagDefs: remote.tagDefs
+            ? _mergeOrderedList(base && base.tagDefs, local.tagDefs || [], remote.tagDefs, x => x.name, (b, l, r) => (l && (!b || !_sameItem(l, b))) ? l : (r || l))
+            : (local.tagDefs || []).slice(),
         _editedAt: remote._editedAt
     };
 }
@@ -879,6 +886,10 @@ async function _applySettingsData(s, editedAt = s._editedAt) {
         Object.keys(typeNotebookSettings).forEach(k => delete typeNotebookSettings[k]);
         Object.assign(typeNotebookSettings, s.typeNotebookSettings);
         localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings));
+    }
+    if (Array.isArray(s.tagDefs)) {
+        tagDefs.splice(0, tagDefs.length, ...s.tagDefs.map(d => Object.assign({}, d)));
+        localStorage.setItem('daily_journal_tags', JSON.stringify(tagDefs));
     }
     if (s.typeHomeSettings) {
         Object.keys(typeHomeSettings).forEach(k => delete typeHomeSettings[k]);
@@ -987,7 +998,7 @@ async function _pushSettings() {
 
     if (!getSettingsEditedAt()) localStorage.setItem(SETTINGS_EDITED_AT_KEY, new Date().toISOString());
     const data = JSON.parse(JSON.stringify({
-        appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings,
+        appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs,
         _editedAt: getSettingsEditedAt()
     }));
     const payload = { user_id: supabaseUser.id, settings_data: data, updated_at: new Date().toISOString() };
@@ -1375,7 +1386,7 @@ async function cleanupUnusedCloudImages() {
         } else {
             const { error } = await supabaseClient.from('app_settings').upsert({
                 user_id: uid, images_cleaned_at: now,
-                settings_data: { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, _editedAt: getSettingsEditedAt() }
+                settings_data: { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, _editedAt: getSettingsEditedAt() }
             });
             if (error) throw error;
         }
@@ -1390,7 +1401,9 @@ function refreshUIAfterSync() {
     if (settingsOpen) {
         if (typeof renderSettingsTypeList === 'function') renderSettingsTypeList();
         if (typeof renderSettingsCategoryList === 'function') renderSettingsCategoryList();
+        if (typeof renderSettingsTagList === 'function') renderSettingsTagList();
     }
+    if (typeof refreshOpenTagUIs === 'function') refreshOpenTagUIs();
     // ノートを編集中は、カードを描き直すと入力中の内容が消えるので描画を控える（編集終了時に描画される）
     const editingNote = typeof currentActiveEditorNotebookId !== 'undefined' && currentActiveEditorNotebookId;
     if (!editingNote && typeof renderRightCards === 'function') renderRightCards();

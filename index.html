@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.25-3">
+    <link rel="stylesheet" href="style.css?v=2026.09.25-4">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.25-3';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.25-4';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -446,6 +446,20 @@
                 <div class="photo-previews-container" id="addPhotoPreviewsContainer"></div>
             </div>
 
+            <div class="tag-attach-section" id="addTagSection">
+                <div class="tag-section-label">タグ</div>
+                <div class="tag-selected" id="addTagSelected"></div>
+                <div class="tag-input-row">
+                    <div class="tag-input-wrap">
+                        <span class="tag-input-hash" aria-hidden="true">#</span>
+                        <input type="text" class="tag-input" id="addTagInput" placeholder="タグを入力" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="done" oninput="handleTagInput('add')" onkeydown="handleTagInputKeydown(event, 'add')" onfocus="renderTagSuggest('add')" onblur="handleTagInputBlur('add')">
+                        <div class="tag-suggest" id="addTagSuggest"></div>
+                    </div>
+                    <button type="button" class="tag-pick-btn" onclick="openTagPicker('add')">🏷️ 選ぶ</button>
+                </div>
+                <div class="tag-fav-row" id="addTagFavs" style="display: none;"></div>
+            </div>
+
             <div class="modal-actions">
                 <button class="modal-btn cancel" onclick="cancelAddModal()">キャンセル</button>
                 <button class="modal-btn submit" onclick="saveNewLog()">追加する</button>
@@ -623,11 +637,38 @@
                 <div class="photo-previews-container" id="editPhotoPreviewsContainer"></div>
             </div>
 
+            <div class="tag-attach-section" id="editTagSection">
+                <div class="tag-section-label">タグ</div>
+                <div class="tag-selected" id="editTagSelected"></div>
+                <div class="tag-input-row">
+                    <div class="tag-input-wrap">
+                        <span class="tag-input-hash" aria-hidden="true">#</span>
+                        <input type="text" class="tag-input" id="editTagInput" placeholder="タグを入力" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="done" oninput="handleTagInput('edit')" onkeydown="handleTagInputKeydown(event, 'edit')" onfocus="renderTagSuggest('edit')" onblur="handleTagInputBlur('edit')">
+                        <div class="tag-suggest" id="editTagSuggest"></div>
+                    </div>
+                    <button type="button" class="tag-pick-btn" onclick="openTagPicker('edit')">🏷️ 選ぶ</button>
+                </div>
+                <div class="tag-fav-row" id="editTagFavs" style="display: none;"></div>
+            </div>
+
             <div class="modal-actions three-columns">
                 <button class="modal-btn delete" onclick="deleteFromEditModal()">削除</button>
                 <button class="modal-btn cancel" onclick="cancelEditModal()">キャンセル</button>
                 <button class="modal-btn submit" onclick="saveEditedLog()">更新</button>
             </div>
+        </div>
+    </div>
+
+    <!-- タグを選ぶ画面（追記・編集画面の上に重ねる） -->
+    <div class="modal-overlay" id="tagPickerModal" onclick="if (event.target.id === 'tagPickerModal') closeTagPicker()">
+        <div class="modal-content tag-picker-content">
+            <div class="modal-header">
+                <span>タグを選ぶ</span>
+                <span class="tag-picker-type" id="tagPickerType"></span>
+            </div>
+            <input type="text" class="search-input tag-picker-search" id="tagPickerSearch" placeholder="タグを探す・新しく作る" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" oninput="handleTagPickerSearch(event)">
+            <div class="tag-picker-list" id="tagPickerList"></div>
+            <button type="button" class="modal-btn submit" onclick="closeTagPicker()">完了</button>
         </div>
     </div>
 
@@ -741,6 +782,10 @@
                 <button type="button" class="settings-nav-btn" id="tabBtnCategories" onclick="switchSettingsTab('categories')">
                     <span class="settings-nav-icon">📁</span>
                     <span>カテゴリ</span>
+                </button>
+                <button type="button" class="settings-nav-btn" id="tabBtnTags" onclick="switchSettingsTab('tags')">
+                    <span class="settings-nav-icon">🏷️</span>
+                    <span>タグ</span>
                 </button>
                 <button type="button" class="settings-nav-btn" id="tabBtnData" onclick="switchSettingsTab('data')">
                     <span class="settings-nav-icon">💾</span>
@@ -865,6 +910,23 @@
                         <input type="text" class="settings-text-input" id="newCatName" placeholder="カテゴリ名...">
                         <select class="settings-select" id="newCatType"></select>
                         <button type="button" class="data-action-btn primary-btn" onclick="addNewCategory()">追加</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- タグ管理 -->
+            <div class="settings-page" id="settingsPageTags">
+                <div class="settings-card-box">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                        <span class="settings-card-title" style="margin-bottom: 0;">タグ一覧</span>
+                        <span id="tagCountIndicator" style="font-size: 12px; color: var(--text-secondary); font-weight: 700;">0件</span>
+                    </div>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5;">タイプのタグは、そのタイプのカテゴリで書いているときだけ候補に出ます。共通のタグはいつでも出ます。☆を付けたタグは追記画面に並びます。</div>
+                    <div class="settings-item-list" id="settingsTagList"></div>
+                    <div class="settings-add-row" style="margin-top: 8px;">
+                        <input type="text" class="settings-text-input" id="newTagName" placeholder="新しいタグ名..." autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" onkeydown="if (event.key === 'Enter' && !event.isComposing) addTagFromSettings()">
+                        <select class="settings-select" id="newTagScope"></select>
+                        <button type="button" class="data-action-btn primary-btn" onclick="addTagFromSettings()">追加</button>
                     </div>
                 </div>
             </div>
@@ -1093,14 +1155,15 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.25-3"></script>
-    <script src="main.js?v=2026.09.25-3"></script>
-    <script src="calendar.js?v=2026.09.25-3"></script>
-    <script src="notebooks.js?v=2026.09.25-3"></script>
-    <script src="ui.js?v=2026.09.25-3"></script>
+    <script src="purify.min.js?v=2026.09.25-4"></script>
+    <script src="main.js?v=2026.09.25-4"></script>
+    <script src="calendar.js?v=2026.09.25-4"></script>
+    <script src="notebooks.js?v=2026.09.25-4"></script>
+    <script src="ui.js?v=2026.09.25-4"></script>
+    <script src="tags.js?v=2026.09.25-4"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.25-3"></script>
+    <script src="supabase-sync.js?v=2026.09.25-4"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 
