@@ -293,12 +293,13 @@ function renderTagListCard(tag) {
     const container = document.getElementById('journalCarouselContainer');
     container.innerHTML = '';
     const items = [];
-    Object.keys(journalData).forEach(d => (journalData[d] || []).forEach((log, i) => { if ((log.tags || []).includes(tag)) items.push({ dateStr: d, log, index: i }); }));
+    // カテゴリボタンの選択（ホーム・すべて・タイプ・カテゴリ）に従う
+    Object.keys(journalData).forEach(d => (journalData[d] || []).forEach((log, i) => { if ((log.tags || []).includes(tag) && matchesCurrentFilter(log)) items.push({ dateStr: d, log, index: i }); }));
     items.sort((a, b) => (b.dateStr + (b.log.time || '')).localeCompare(a.dateStr + (a.log.time || '')));
     const def = getTagDef(tag);
     let body = '';
     if (!items.length) {
-        body = `<div class="empty-state"><span style="font-size: 15px; font-weight: 600;">#${escapeHtml(tag)} の記録はまだありません</span></div>`;
+        body = `<div class="empty-state"><span style="font-size: 15px; font-weight: 600;">#${escapeHtml(tag)} の記録はありません</span>${currentFilter.mode !== 'all' || getHomeHiddenTypes().length ? '<span style="font-size: 13px; opacity: 0.7;">カテゴリの選択を変えると見つかるかもしれません</span>' : ''}</div>`;
     } else {
         let cur = null;
         body = '<ul class="log-list">';
@@ -315,7 +316,7 @@ function renderTagListCard(tag) {
     panel.className = 'card-carousel-panel';
     panel.style.width = '100%';
     panel.dataset.key = 'tag';
-    panel.innerHTML = `<div class="main-display"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">TAG${def ? ' · ' + escapeHtml(tagScopeLabel(def.scope)) : ''}</span><h1 class="date-title">#${escapeHtml(tag)}</h1></div><div class="header-actions"><button type="button" class="data-action-btn" onclick="closeTagView()" style="font-size: 11px; padding: 4px 9px;">閉じる</button><span class="header-badge">${items.length} 件</span></div></div><div class="logs-container-wrapper" style="padding: 4px 2px;">${body}</div></div>`;
+    panel.innerHTML = `<div class="main-display"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">TAG${def ? ' · ' + escapeHtml(tagScopeLabel(def.scope)) : ''}</span><h1 class="date-title">#${escapeHtml(tag)}</h1></div><div class="header-actions">${getActiveFilterBadgeHtml()}<button type="button" class="data-action-btn" onclick="closeTagView()" style="font-size: 11px; padding: 4px 9px;">閉じる</button><span class="header-badge">${items.length} 件</span></div></div><div class="logs-container-wrapper" style="padding: 4px 2px;">${body}</div></div>`;
     container.appendChild(panel);
 }
 
@@ -419,3 +420,102 @@ function commitPendingTagInput(m) {
     if (!_modalTags(m).includes(q)) _setModalTags(m, _modalTags(m).concat([q]));
     inp.value = '';
 }
+
+
+// ------------------------------------------
+// タグから探す（左サイドバー・スマホのカレンダーの検索欄の横）
+// ------------------------------------------
+// 今のカテゴリの選択で見える記録に、1件以上付いているタグだけを出す（件数もその中で数える）
+let _tagBrowseAnchor = null, _tagBrowseFrom = null, _tagBrowseQuery = '';
+function getFilteredTagCounts() {
+    const c = new Map();
+    for (const d of Object.keys(journalData)) for (const log of (journalData[d] || [])) {
+        if (!log.tags || !log.tags.length || !matchesCurrentFilter(log)) continue;
+        for (const t of log.tags) c.set(t, (c.get(t) || 0) + 1);
+    }
+    return c;
+}
+function toggleTagBrowse(btn, from) {
+    const pop = document.getElementById('tagBrowsePopover');
+    if (pop && pop.classList.contains('open') && _tagBrowseAnchor === btn) { closeTagBrowse(); return; }
+    openTagBrowse(btn, from);
+}
+function openTagBrowse(btn, from) {
+    let pop = document.getElementById('tagBrowsePopover');
+    if (!pop) {
+        pop = document.createElement('div');
+        pop.id = 'tagBrowsePopover';
+        pop.className = 'tag-browse-pop';
+        pop.setAttribute('role', 'dialog');
+        pop.setAttribute('aria-label', 'タグから探す');
+        pop.innerHTML = `<div class="tag-browse-head"><span>タグから探す</span><span class="tag-browse-filter" id="tagBrowseFilter"></span><button type="button" class="tag-browse-close" onclick="closeTagBrowse()" aria-label="閉じる">✕</button></div>
+            <input type="text" class="tag-browse-search" id="tagBrowseSearch" placeholder="タグを絞り込む" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" oninput="_tagBrowseQuery = normalizeTagName(this.value); renderTagBrowse()">
+            <div class="tag-browse-list" id="tagBrowseList"></div>`;
+        document.body.appendChild(pop);
+    }
+    document.querySelectorAll('.tag-browse-btn.is-on').forEach(b => b.classList.remove('is-on'));
+    _tagBrowseAnchor = btn; _tagBrowseFrom = from; _tagBrowseQuery = '';
+    document.getElementById('tagBrowseSearch').value = '';
+    btn.classList.add('is-on');
+    renderTagBrowse();
+    pop.classList.add('open');
+    positionTagBrowse();
+    // スマホではキーボードを勝手に出さない
+    if (!isCurrentMobileMode()) setTimeout(() => { const s = document.getElementById('tagBrowseSearch'); if (s) s.focus(); }, 30);
+}
+function positionTagBrowse() {
+    const pop = document.getElementById('tagBrowsePopover');
+    if (!pop || !_tagBrowseAnchor) return;
+    const r = _tagBrowseAnchor.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const w = Math.min(300, vw - 24);
+    let left = _tagBrowseFrom === 'sidebar' ? r.left - 190 : r.right - w;
+    left = Math.max(12, Math.min(vw - w - 12, left));
+    const top = r.bottom + 8;
+    pop.style.width = w + 'px';
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    pop.style.maxHeight = Math.max(200, vh - top - 16) + 'px';
+}
+function closeTagBrowse() {
+    const pop = document.getElementById('tagBrowsePopover');
+    if (pop) pop.classList.remove('open');
+    document.querySelectorAll('.tag-browse-btn.is-on').forEach(b => b.classList.remove('is-on'));
+    _tagBrowseAnchor = null;
+}
+function renderTagBrowse() {
+    const list = document.getElementById('tagBrowseList');
+    if (!list) return;
+    const fl = document.getElementById('tagBrowseFilter');
+    if (fl) fl.textContent = currentFilter.mode === 'all' ? 'ホーム' : (currentFilter.mode === 'everything' ? 'すべて' : currentFilter.value);
+    const counts = getFilteredTagCounts();
+    const q = _tagBrowseQuery;
+    const items = [...counts.entries()].map(([name, count]) => { const d = getTagDef(name); return { name, count, fav: !!(d && d.fav), scope: d ? d.scope : TAG_COMMON }; })
+        .filter(t => !q || t.name.includes(q));
+    const favs = items.filter(t => t.fav).sort(_byCount);
+    const rest = items.filter(t => !t.fav).sort(_byCount);
+    const row = t => `<button type="button" class="tag-browse-row" data-tag-browse="${escapeHtml(t.name)}">${t.fav ? '<span class="tag-browse-star">★</span>' : ''}<span class="tag-browse-name">#${escapeHtml(t.name)}</span><span class="tag-level">${escapeHtml(tagScopeLabel(t.scope))}</span><span class="tag-pk-count">${t.count}件</span></button>`;
+    let html = '';
+    if (favs.length) html += '<div class="tag-pk-sec">お気に入り</div>' + favs.map(row).join('');
+    if (rest.length) html += `<div class="tag-pk-sec">${favs.length ? 'よく使う順' : 'よく使う順'}</div>` + rest.map(row).join('');
+    if (!html) html = `<div class="tag-pk-empty">${q ? '見つかりません' : (counts.size ? '' : 'この表示の記録には、まだタグが付いていません')}</div>`;
+    list.innerHTML = html;
+}
+document.addEventListener('click', e => {
+    const row = e.target.closest ? e.target.closest('[data-tag-browse]') : null;
+    if (row) {
+        const tag = row.dataset.tagBrowse;
+        const from = _tagBrowseFrom;
+        closeTagBrowse();
+        if (from === 'popup') closeModal('fullscreenCalendarModal');
+        openTagView(tag);
+        return;
+    }
+    const pop = document.getElementById('tagBrowsePopover');
+    if (pop && pop.classList.contains('open') && !pop.contains(e.target) && !(e.target.closest && e.target.closest('.tag-browse-btn'))) closeTagBrowse();
+}, true);
+document.addEventListener('keydown', e => {
+    const pop = document.getElementById('tagBrowsePopover');
+    if (e.key === 'Escape' && pop && pop.classList.contains('open')) { e.stopPropagation(); closeTagBrowse(); }
+}, true);
+window.addEventListener('resize', () => positionTagBrowse());
