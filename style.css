@@ -2124,3 +2124,12 @@ body.light-theme .tag-chip-fav { border-color: rgba(0, 0, 0, 0.2); }
 .tag-browse-star { color: var(--pin); font-size: 12px; }
 .tag-browse-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag-browse-row .tag-level { margin-right: 0; }
+
+.tag-browse-btn.is-active { color: var(--accent-color); border-color: var(--accent-color); background: var(--accent-soft); }
+.tag-browse-current { display: flex; align-items: center; gap: 8px; background: var(--accent-soft); border: 1px solid var(--accent-color); border-radius: 10px; padding: 6px 6px 6px 10px; font-size: 13.5px; color: var(--accent-color); margin-bottom: 2px; }
+.tag-browse-cur-label { font-size: 11px; font-weight: 700; opacity: 0.8; white-space: nowrap; }
+.tag-browse-current .tag-browse-name { color: var(--accent-color); }
+.tag-browse-clear { flex-shrink: 0; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--accent-color); background: var(--modal-bg); color: var(--accent-color); cursor: pointer; font-family: inherit; }
+.tag-browse-row.is-current { background: var(--accent-soft); }
+.tag-browse-row.is-current .tag-browse-name { color: var(--accent-color); }
+.tag-browse-check { color: var(--accent-color); font-weight: 800; font-size: 13px; }

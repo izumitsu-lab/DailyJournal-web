@@ -594,7 +594,7 @@ function renderCategoryFilterModal() {
     const hidden = getHomeHiddenTypes().filter(t => categories.some(ca => (ca.type || "一般") === t));
     const homeBtn = document.createElement('div');
     homeBtn.className = `cat-filter-all-btn ${currentFilter.mode === 'all' ? 'selected' : ''}`;
-    homeBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px; min-width: 0;"><span style="font-size: 18px;">🏠</span><div class="cat-filter-all-text"><span class="cat-filter-name">ホーム</span>${hidden.length ? `<span class="cat-filter-all-sub">${escapeHtml(hidden.join('・'))} を除く</span>` : ''}</div></div>`;
+    homeBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px; min-width: 0;"><span style="font-size: 18px;">🏠</span><div class="cat-filter-all-text"><span class="cat-filter-name">ホーム</span></div></div>`;
     homeBtn.onclick = () => selectFilter('all'); c.appendChild(homeBtn);
 
     const types = appTypes.filter(t => categories.some(ca => (ca.type || "一般") === t));
@@ -619,7 +619,7 @@ function renderCategoryFilterModal() {
     // 一番下：すべて表示（ホームに出さないタイプも含めて全部）
     const allBtn = document.createElement('div');
     allBtn.className = `cat-filter-all-btn cat-filter-everything-btn ${currentFilter.mode === 'everything' ? 'selected' : ''}`;
-    allBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px; min-width: 0;"><span style="font-size: 18px;">🌐</span><div class="cat-filter-all-text"><span class="cat-filter-name">すべて表示</span><span class="cat-filter-all-sub">${hidden.length ? 'ホームに出さないタイプも含めて全部' : 'すべてのタイプ'}</span></div></div>`;
+    allBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px; min-width: 0;"><span style="font-size: 18px;">🌐</span><div class="cat-filter-all-text"><span class="cat-filter-name">すべて表示</span></div></div>`;
     allBtn.onclick = () => selectFilter('everything'); c.appendChild(allBtn);
 }
 
@@ -1055,6 +1055,7 @@ function getEmptyStateMessage() {
 function renderRightCards() {
     // 表示切り替えの処理中は描き直しを1回にまとめる（triggerSmoothViewSwitch 参照）
     if (_deferRender) { _renderDirty = true; return; }
+    if (typeof updateTagBrowseButtons === 'function') updateTagBrowseButtons();
     saveCurrentScrollPositions();
     const container = document.getElementById('journalCarouselContainer');
     if (container) container.classList.remove('grid-mode-active');

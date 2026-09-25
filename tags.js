@@ -449,6 +449,7 @@ function openTagBrowse(btn, from) {
         pop.setAttribute('role', 'dialog');
         pop.setAttribute('aria-label', 'タグから探す');
         pop.innerHTML = `<div class="tag-browse-head"><span>タグから探す</span><span class="tag-browse-filter" id="tagBrowseFilter"></span><button type="button" class="tag-browse-close" onclick="closeTagBrowse()" aria-label="閉じる">✕</button></div>
+            <div id="tagBrowseCurrent"></div>
             <input type="text" class="tag-browse-search" id="tagBrowseSearch" placeholder="タグを絞り込む" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" oninput="_tagBrowseQuery = normalizeTagName(this.value); renderTagBrowse()">
             <div class="tag-browse-list" id="tagBrowseList"></div>`;
         document.body.appendChild(pop);
@@ -494,8 +495,12 @@ function renderTagBrowse() {
         .filter(t => !q || t.name.includes(q));
     const favs = items.filter(t => t.fav).sort(_byCount);
     const rest = items.filter(t => !t.fav).sort(_byCount);
-    const row = t => `<button type="button" class="tag-browse-row" data-tag-browse="${escapeHtml(t.name)}">${t.fav ? '<span class="tag-browse-star">★</span>' : ''}<span class="tag-browse-name">#${escapeHtml(t.name)}</span><span class="tag-level">${escapeHtml(tagScopeLabel(t.scope))}</span><span class="tag-pk-count">${t.count}件</span></button>`;
+    const curTag = (typeof showTagView === 'string' && calendarScope !== 'notebooks') ? showTagView : null;
+    const row = t => `<button type="button" class="tag-browse-row${t.name === curTag ? ' is-current' : ''}" data-tag-browse="${escapeHtml(t.name)}">${t.fav ? '<span class="tag-browse-star">★</span>' : ''}<span class="tag-browse-name">#${escapeHtml(t.name)}</span><span class="tag-level">${escapeHtml(tagScopeLabel(t.scope))}</span><span class="tag-pk-count">${t.name === curTag ? '<span class="tag-browse-check">✓</span>' : t.count + '件'}</span></button>`;
     let html = '';
+    const cur = (typeof showTagView === 'string' && showTagView && calendarScope !== 'notebooks') ? showTagView : null;
+    const curBox = document.getElementById('tagBrowseCurrent');
+    if (curBox) curBox.innerHTML = cur ? `<div class="tag-browse-current"><span class="tag-browse-cur-label">表示中</span><span class="tag-browse-name">#${escapeHtml(cur)}</span><button type="button" class="tag-browse-clear" onclick="clearTagFromBrowse()">解除</button></div>` : '';
     if (favs.length) html += '<div class="tag-pk-sec">お気に入り</div>' + favs.map(row).join('');
     if (rest.length) html += `<div class="tag-pk-sec">${favs.length ? 'よく使う順' : 'よく使う順'}</div>` + rest.map(row).join('');
     if (!html) html = `<div class="tag-pk-empty">${q ? '見つかりません' : (counts.size ? '' : 'この表示の記録には、まだタグが付いていません')}</div>`;
@@ -508,7 +513,8 @@ document.addEventListener('click', e => {
         const from = _tagBrowseFrom;
         closeTagBrowse();
         if (from === 'popup') closeModal('fullscreenCalendarModal');
-        openTagView(tag);
+        if (tag === showTagView && calendarScope !== 'notebooks') closeTagView(); // 表示中のタグをもう一度押したら解除
+        else openTagView(tag);
         return;
     }
     const pop = document.getElementById('tagBrowsePopover');
@@ -519,3 +525,16 @@ document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && pop && pop.classList.contains('open')) { e.stopPropagation(); closeTagBrowse(); }
 }, true);
 window.addEventListener('resize', () => positionTagBrowse());
+
+// 「解除」：タグを選ぶ前の表示（日・週・月・写真と、見ていた日付）に戻る
+function clearTagFromBrowse() {
+    const from = _tagBrowseFrom;
+    closeTagBrowse();
+    if (from === 'popup') closeModal('fullscreenCalendarModal');
+    closeTagView();
+}
+// タグで絞り込み中は🏷️ボタンを青くする
+function updateTagBrowseButtons() {
+    const on = !!showTagView && calendarScope !== 'notebooks';
+    document.querySelectorAll('.tag-browse-btn').forEach(b => b.classList.toggle('is-active', on));
+}
