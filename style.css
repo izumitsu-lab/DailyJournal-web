@@ -2246,3 +2246,17 @@ body.light-theme .tag-chip-fav { border-color: rgba(0, 0, 0, 0.2); }
 .modal-btn:disabled { opacity: 0.45; cursor: default; }
 .category-manage-item.is-orphan { border-color: rgba(230, 126, 34, 0.45); }
 .category-manage-actions .settings-icon-btn.del-btn { font-size: 13px; }
+
+/* ===== 2026.09.26-8: @メンション ===== */
+.mention-pill { display: inline; font: inherit; font-size: 0.93em; font-weight: 700; color: var(--accent-color); background: var(--accent-soft); border: none; border-radius: 6px; padding: 0 5px; margin: 0 1px; cursor: pointer; line-height: inherit; -webkit-user-select: none; user-select: none; }
+.mention-pill:hover { filter: brightness(0.95); }
+.mention-pill.is-archived { color: var(--text-secondary); background: rgba(128, 128, 128, 0.14); }
+.log-item.is-mentioned { border-style: dashed; background-color: transparent; }
+.mention-via { font-size: 11px; font-weight: 600; color: var(--text-secondary); display: flex; align-items: center; gap: 4px; margin-bottom: -2px; }
+.mention-via-at { font-weight: 800; color: var(--accent-color); }
+.mention-pop { position: fixed; z-index: 3200; display: none; flex-direction: column; gap: 1px; background: var(--modal-bg); border: 1px solid var(--modal-border); border-radius: 12px; padding: 5px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22); max-height: 260px; overflow-y: auto; }
+.mention-pop.open { display: flex; }
+.mention-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; background: transparent; border: none; border-radius: 8px; padding: 8px 9px; font-family: inherit; cursor: pointer; text-align: left; color: var(--text-primary); }
+.mention-item.is-active, .mention-item:hover { background: var(--accent-soft); }
+.mention-item-name { font-size: 14px; font-weight: 700; }
+.mention-item-type { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }

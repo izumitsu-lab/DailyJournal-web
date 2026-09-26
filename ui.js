@@ -447,7 +447,8 @@ function matchesCurrentFilter(item) {
         return false;
     }
 
-    if (currentFilter.mode === 'category') return cat === currentFilter.value;
+    // カテゴリの表示では、本文で「@カテゴリ名」と呼ばれた記録も一緒に並べる（mentions.js）
+    if (currentFilter.mode === 'category') return cat === currentFilter.value || (typeof logMentions === 'function' && logMentions(item).includes(currentFilter.value));
     if (currentFilter.mode === 'type') return catType === currentFilter.value;
     return true;
 }
@@ -1056,11 +1057,12 @@ function createLogItemHtml(log, dateStr, originalIndex) {
     const pHtml = p.length > 0 ? `<div class="log-photos-grid">` + p.map(img => `<div class="log-photo-thumb-wrap" onclick="event.stopPropagation(); openLightboxFromImg(this.querySelector('img'))"><img class="log-photo-thumb" ${imgSrcAttrs(img, 240)}></div>`).join('') + `</div>` : "";
 
     let cHtml = "";
-    if (sType === 'incoming') cHtml = `<div class="chat-bubble-card incoming"><div class="chat-bubble-header"><span>💬</span><span>${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
-    else if (sType === 'outgoing') cHtml = `<div class="chat-bubble-card outgoing"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
-    else cHtml = `<div class="log-content">${parseLinksAndText(log.text)}</div>`;
+    if (sType === 'incoming') cHtml = `<div class="chat-bubble-card incoming"><div class="chat-bubble-header"><span>💬</span><span>${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${renderLogText(log.text)}</div></div>`;
+    else if (sType === 'outgoing') cHtml = `<div class="chat-bubble-card outgoing"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(catName)}</span></div><div class="chat-bubble-text">${renderLogText(log.text)}</div></div>`;
+    else cHtml = `<div class="log-content">${renderLogText(log.text)}</div>`;
 
-    return `<li class="log-item${log.backdated ? ' is-backdated' : ''}${log.pinned ? ' is-pinned' : ''}" id="logItem_${dateStr}_${log.id}"><div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${cHtml}${pHtml}${logTagsHtml(log)}</li>`;
+    const viaHtml = typeof mentionViaHtml === 'function' ? mentionViaHtml(log) : '';
+    return `<li class="log-item${log.backdated ? ' is-backdated' : ''}${log.pinned ? ' is-pinned' : ''}${viaHtml ? ' is-mentioned' : ''}" id="logItem_${dateStr}_${log.id}">${viaHtml}<div class="log-header-row"><div class="log-meta-group"><span class="log-badge">${escapeHtml(log.time)}</span>${catBadge}${sBadge}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${cHtml}${pHtml}${logTagsHtml(log)}</li>`;
 }
 
 function getFilteredDayLogs(dStr) {
@@ -1251,13 +1253,13 @@ function renderPhotoJournalCarousel() {
         const cp = photos.length > 1 ? `<div class="photo-count-pill">📷 1 / ${photos.length}</div>` : '';
         
         let mb = "";
-        if (sType === 'incoming') mb = `<div class="chat-bubble-card incoming" style="margin-top: 2px;"><div class="chat-bubble-header"><span>💬</span><span>${escapeHtml(cat)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
-        else if (sType === 'outgoing') mb = `<div class="chat-bubble-card outgoing" style="margin-top: 2px;"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(cat)}</span></div><div class="chat-bubble-text">${parseLinksAndText(log.text)}</div></div>`;
-        else mb = `<div class="journal-drawer-text">${parseLinksAndText(log.text)}</div>`;
+        if (sType === 'incoming') mb = `<div class="chat-bubble-card incoming" style="margin-top: 2px;"><div class="chat-bubble-header"><span>💬</span><span>${escapeHtml(cat)}</span></div><div class="chat-bubble-text">${renderLogText(log.text)}</div></div>`;
+        else if (sType === 'outgoing') mb = `<div class="chat-bubble-card outgoing" style="margin-top: 2px;"><div class="chat-bubble-header"><span>💬</span><span>あなた → ${escapeHtml(cat)}</span></div><div class="chat-bubble-text">${renderLogText(log.text)}</div></div>`;
+        else mb = `<div class="journal-drawer-text">${renderLogText(log.text)}</div>`;
 
         const panelKey = `photo_${dateStr}_${log.id}`;
         const p = document.createElement('div'); p.className = 'card-carousel-panel'; p.dataset.key = panelKey; p.dataset.date = dateStr;
-        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer${log.pinned ? ' is-pinned' : ''}"><div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${mb}${logTagsHtml(log)}</div></div>`;
+        p.innerHTML = `<div class="main-display journal-card-layout"><div class="display-header compact-header"><div class="date-title-wrapper"><span class="date-eyebrow">PHOTO JOURNAL</span><h1 class="date-title">${formatDateHeader(dateStr)}</h1></div><div class="header-actions">${filterBadgeHtml}<span style="font-size: 11px; font-weight: 700; color: var(--text-secondary); opacity: 0.8; margin-right: 4px;">${dateStr}</span><span class="header-badge">${pIdx + 1} / ${pLogs.length}</span></div></div><div class="photo-stage-viewport">${cp}<div class="photo-stage-scroller" onscroll="updateSlideCounter(this)">${sHtml}</div></div><div class="journal-bottom-drawer${log.pinned ? ' is-pinned' : ''}">${typeof mentionViaHtml === 'function' ? mentionViaHtml(log) : ''}<div class="journal-drawer-header"><div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"><span class="log-badge">${escapeHtml(log.time)}</span><span class="log-category-badge ${tCls}">${escapeHtml(cat)}</span>${sb}${lateMarkHtml(log, dateStr)}</div><div class="log-actions">${pinButtonHtml(log, dateStr)}<button class="log-edit-btn" onclick="openEditModal('${dateStr}', '${log.id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button></div></div>${mb}${logTagsHtml(log)}</div></div>`;
         container.appendChild(p);
     });
 
@@ -2017,6 +2019,7 @@ async function moveCategoryRecords(from, to) {
     let jChanged = false, nChanged = false;
     for (const d of Object.keys(journalData)) for (const l of (journalData[d] || [])) if ((l.category || 'ライフログ') === from) { l.category = to; jChanged = true; }
     notebookData.forEach(n => { if ((n.category || 'ライフログ') === from) { n.category = to; nChanged = true; } });
+    if (typeof replaceMentionsInLogs === 'function' && replaceMentionsInLogs(from, to)) jChanged = true;
     retargetTemplateScopes('cat:' + from, 'cat:' + to);
     if (tagDefs.some(d => d.scope === 'cat:' + from)) { tagDefs.forEach(d => { if (d.scope === 'cat:' + from) d.scope = 'cat:' + to; }); saveTagDefs(); }
     if (typeof renameTemplateLastCategory === 'function') renameTemplateLastCategory(from, to);

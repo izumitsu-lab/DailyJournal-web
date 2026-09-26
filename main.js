@@ -18,7 +18,7 @@ window.addEventListener('orientationchange', () => {
 updateAppHeight();
 
 // アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
-const APP_VERSION = '2026.09.26-7';
+const APP_VERSION = '2026.09.26-8';
 function applyAppVersionLabel() {
     const el = document.getElementById('appVersionLabel');
     if (!el) return;
@@ -972,6 +972,8 @@ async function renameCategory(oldName, newName) {
     }
 
     let journalUpdated = false;
+    // 本文の「@旧名前」も書き換える（mentions.js）
+    if (typeof replaceMentionsInLogs === 'function' && replaceMentionsInLogs(oldName, newName)) journalUpdated = true;
     Object.keys(journalData).forEach(dateStr => {
         if (Array.isArray(journalData[dateStr])) {
             journalData[dateStr].forEach(log => {
