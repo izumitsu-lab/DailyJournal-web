@@ -117,6 +117,12 @@ function schedulePush(delay = 800) {
     }, delay);
 }
 
+// RLS（本人の行だけ・許可リストの人だけ）で書き込みが拒否されたか
+function _isPermissionError(e) {
+    const s = ((e && (e.code || '')) + ' ' + (e && (e.message || e.error || '')) + ' ' + (e && e.statusCode || '')).toString();
+    return /42501|row-level security|violates row level|Unauthorized|\b403\b/i.test(s);
+}
+
 function _reportSyncError(e) {
     console.warn('同期に失敗しました（未送信分は保持され、自動で再試行します）', e);
     _lastSyncError = e;
@@ -138,7 +144,7 @@ function updateSyncStatusUI() {
     const icon = document.getElementById('btnSyncPullIcon');
     const statusEl = document.getElementById('supabaseSyncStatus');
 
-    const configured = !!localStorage.getItem('daily_journal_supabase_url');
+    const configured = !!getSupabaseConfig();
     if (!configured) { _setSyncAlertDot(null); return; }
 
     let text, iconChar, color;
@@ -155,6 +161,9 @@ function updateSyncStatusUI() {
     } else if (_isSyncing) {
         text = pending > 0 ? `同期中… (未送信 ${pending} 件)` : "同期中…";
         iconChar = "🔄"; color = "#e67e22";
+    } else if (_lastSyncError && _isPermissionError(_lastSyncError)) {
+        text = `このアカウントにはクラウドへの保存が許可されていません（許可リストへの登録が必要です）。未送信 ${pending} 件は本体に保存されています。`;
+        iconChar = "⚠️"; color = "#e74c3c";
     } else if (_lastSyncError) {
         text = `同期エラー（未送信 ${pending} 件は保持・自動で再試行します）`;
         iconChar = "⚠️"; color = "#e74c3c";
@@ -179,16 +188,62 @@ function updateSyncStatusUI() {
 // ==========================================
 // 2. 初期化と設定管理
 // ==========================================
-document.addEventListener('DOMContentLoaded', () => {
-    const savedUrl = localStorage.getItem('daily_journal_supabase_url');
-    const savedKey = localStorage.getItem('daily_journal_supabase_key');
+// 既定の接続先（このアプリ専用の Supabase）。
+// URL と Anon Key（Publishable Key）は公開前提の値で、ここに書いても安全です。
+// データを守っているのはサーバー側の RLS（本人の行だけ・許可リストの人だけ）です。
+// ※ service_role key（秘密鍵）は絶対にここへ書かないこと。
+const DEFAULT_SUPABASE_URL = 'https://jgqnirudwghgexiinybz.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_ArYcXh6SegZ5XyVvZCuYIA_QrQ7c6w-';
 
+// 接続先：設定画面で別の接続先を保存していればそれを、なければ既定値を使う
+function getSupabaseConfig() {
+    const savedUrl = localStorage.getItem('daily_journal_supabase_url') || '';
+    const savedKey = localStorage.getItem('daily_journal_supabase_key') || '';
+    if (savedUrl && savedKey) {
+        const custom = savedUrl !== DEFAULT_SUPABASE_URL || savedKey !== DEFAULT_SUPABASE_ANON_KEY;
+        return { url: savedUrl, key: savedKey, custom };
+    }
+    if (DEFAULT_SUPABASE_URL && DEFAULT_SUPABASE_ANON_KEY) {
+        return { url: DEFAULT_SUPABASE_URL, key: DEFAULT_SUPABASE_ANON_KEY, custom: false };
+    }
+    return null;
+}
+function hasBuiltInSupabaseConfig() { return !!(DEFAULT_SUPABASE_URL && DEFAULT_SUPABASE_ANON_KEY); }
+
+// 設定画面の表示を、使っている接続先に合わせる
+function updateSupabaseConfigUI() {
+    const cfg = getSupabaseConfig();
+    const builtIn = hasBuiltInSupabaseConfig();
+    const custom = !!(cfg && cfg.custom);
+    const info = document.getElementById('supabaseConfigInfo');
+    if (info) {
+        if (!builtIn) info.textContent = '接続先が組み込まれていません。下の「詳細設定」で URL と Anon Key を入力してください。';
+        else if (custom) info.textContent = '別の接続先を使っています（詳細設定で保存したもの）。';
+        else info.textContent = '接続先はアプリに組み込まれています。ログインするだけで同期できます。';
+    }
+    const details = document.getElementById('supabaseAdvanced');
+    if (details && (!builtIn || custom)) details.open = true;
+    const resetBtn = document.getElementById('supabaseResetConfigBtn');
+    if (resetBtn) resetBtn.style.display = (builtIn && custom) ? '' : 'none';
+    // 新規登録は、自分で用意した Supabase を使うときだけ出す（組み込みの接続先では新規登録を受け付けない）
+    const signUpBtn = document.getElementById('supabaseSignUpBtn');
+    if (signUpBtn) signUpBtn.style.display = (!builtIn || custom) ? '' : 'none';
+    const signUpNote = document.getElementById('supabaseSignUpNote');
+    if (signUpNote) signUpNote.style.display = (!builtIn || custom) ? 'none' : '';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const cfg = getSupabaseConfig();
+    const custom = !!(cfg && cfg.custom);
+
+    // 入力欄には、別の接続先を保存しているときだけ値を入れる（既定値は画面に出さない）
     const urlInput = document.getElementById('supabaseUrlInput');
     const keyInput = document.getElementById('supabaseKeyInput');
-    if (urlInput && savedUrl) urlInput.value = savedUrl;
-    if (keyInput && savedKey) keyInput.value = savedKey;
+    if (urlInput && custom) urlInput.value = cfg.url;
+    if (keyInput && custom) keyInput.value = cfg.key;
+    updateSupabaseConfigUI();
 
-    if (savedUrl && savedKey) initSupabase(savedUrl, savedKey);
+    if (cfg) initSupabase(cfg.url, cfg.key);
 });
 
 function initSupabase(url, key) {
@@ -214,10 +269,29 @@ async function saveSupabaseConfig() {
     const key = document.getElementById('supabaseKeyInput').value.trim();
     if (!url || !key) return alert("URLとAnon Keyを入力してください。");
 
+    if (!/^https:\/\/[^\s/]+/.test(url)) return alert("URLは https:// から始まる Project URL を入力してください。");
+
+    const prev = getSupabaseConfig();
     localStorage.setItem('daily_journal_supabase_url', url);
     localStorage.setItem('daily_journal_supabase_key', key);
+    updateSupabaseConfigUI();
+    if (prev && (prev.url !== url || prev.key !== key)) {
+        // 接続先を変えたときは、古い接続を残さないよう読み込み直す
+        alert("接続設定を保存しました。アプリを読み込み直します。");
+        location.reload();
+        return;
+    }
     alert("接続設定を保存しました。");
     initSupabase(url, key);
+}
+
+// 詳細設定で保存した接続先を消して、組み込みの接続先に戻す
+function resetSupabaseConfig() {
+    if (!hasBuiltInSupabaseConfig()) return;
+    if (!confirm("詳細設定で保存した接続先を消して、アプリに組み込まれた接続先に戻しますか？\n（端末内の記録は消えません。戻したあとは、もう一度ログインが必要になることがあります）")) return;
+    localStorage.removeItem('daily_journal_supabase_url');
+    localStorage.removeItem('daily_journal_supabase_key');
+    location.reload();
 }
 
 function setupNetworkAndLifecycleListeners() {
@@ -325,7 +399,11 @@ async function signUpSupabase() {
     let error = null;
     try { ({ error } = await supabaseClient.auth.signUp({ email, password })); } catch (e) { error = e; }
     if (!error) _clearPasswordInput();
-    if (error) alert("登録エラー: " + (error.message || error));
+    if (error) {
+        const msg = error.message || String(error);
+        const hint = /signups? not allowed|signup.*disabled/i.test(msg) ? '\n\n新規登録は受け付けていません。アカウントは管理者が Supabase の管理画面で作成します。' : '';
+        alert("登録エラー: " + msg + hint);
+    }
     else {
         alert("登録完了！データの同期を開始します。");
         checkSupabaseAuth();
@@ -374,6 +452,8 @@ async function signInSupabase() {
                 + '\n・パスワード欄に、iPhoneの自動入力で別の値（Anon Keyなど）が入っていないか'
                 + '\n・メールアドレスの大文字/小文字や前後の空白'
                 + '\n・接続設定の Project URL が、ログインできている端末と同じか';
+        } else if (/signups? not allowed|signup.*disabled/i.test(msg)) {
+            hint = '\n\n新規登録は受け付けていません。アカウントは管理者が Supabase の管理画面で作成します。';
         } else if (/Email not confirmed/i.test(msg)) {
             hint = '\n\n登録確認メールのリンクをまだ開いていません。メールを確認してください。';
         }

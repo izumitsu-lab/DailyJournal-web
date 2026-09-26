@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.25-7">
+    <link rel="stylesheet" href="style.css?v=2026.09.26-1">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.25-7';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.26-1';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -994,45 +994,56 @@
 
             <!-- ☁️ 追加: クラウド設定（Supabase連携） -->
             <div class="settings-page" id="settingsPageCloud">
-                <div class="settings-card-box">
-                    <div class="settings-card-title">🔗 Supabase 接続設定</div>
-                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
-                        ※GitHub等に公開しても安全なように、URLとキーはブラウザにのみ保存されます。
-                    </div>
-                    <input type="url" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
-                    <input type="text" class="settings-text-input masked-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
-                    <button type="button" class="data-action-btn primary-btn" style="margin-top: 8px;" onclick="saveSupabaseConfig()">接続設定を保存</button>
-                </div>
-
                 <div class="settings-card-box" id="supabaseAuthBox" style="display: none;">
                     <div class="settings-card-title">👤 アカウント認証</div>
                     <div id="supabaseLoginForm">
                         <input type="email" class="settings-text-input" id="supabaseEmail" placeholder="メールアドレス" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="email">
                         <input type="password" class="settings-text-input" id="supabasePassword" placeholder="パスワード" name="password" autocomplete="current-password" style="margin-top: 6px;">
                         <div style="display: flex; gap: 8px; margin-top: 8px;">
-                            <button type="button" class="data-action-btn" onclick="signUpSupabase()">新規登録</button>
+                            <button type="button" class="data-action-btn" id="supabaseSignUpBtn" onclick="signUpSupabase()" style="display: none;">新規登録</button>
                             <button type="button" class="data-action-btn primary-btn" onclick="signInSupabase()">ログイン</button>
+                        </div>
+                        <div id="supabaseSignUpNote" style="font-size: 11px; color: var(--text-secondary); margin-top: 6px; display: none;">
+                            アカウントは管理者が作成します（新規登録は受け付けていません）。
                         </div>
                     </div>
                     <button type="button" class="data-action-btn danger-btn" id="supabaseLogoutBtn" style="margin-top: 8px; display: none;" onclick="signOutSupabase()">ログアウト</button>
                     <div id="supabaseAuthStatus" style="font-size: 11.5px; margin-top: 6px; font-weight: bold; color: var(--text-secondary);">未ログイン</div>
                 </div>
 
+                <div class="settings-card-box">
+                    <div class="settings-card-title">🔗 接続先</div>
+                    <div id="supabaseConfigInfo" style="font-size: 11.5px; color: var(--text-secondary);"></div>
+                    <details id="supabaseAdvanced" style="margin-top: 8px;">
+                        <summary style="font-size: 12px; cursor: pointer; color: var(--text-secondary);">詳細設定（別の Supabase を使う場合）</summary>
+                        <div style="font-size: 11.5px; color: var(--text-secondary); margin: 8px 0;">
+                            通常は入力不要です。自分で用意した Supabase を使うときだけ、Project URL と Anon Key（Publishable Key）を入力します。<br>
+                            ※service_role key（秘密鍵）は絶対に入力しないでください。
+                        </div>
+                        <input type="url" class="settings-text-input" id="supabaseUrlInput" placeholder="Supabase Project URL" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+                        <input type="text" class="settings-text-input masked-input" id="supabaseKeyInput" placeholder="Supabase Anon Key" style="margin-top: 6px;" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+                        <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+                            <button type="button" class="data-action-btn primary-btn" onclick="saveSupabaseConfig()">接続設定を保存</button>
+                            <button type="button" class="data-action-btn" id="supabaseResetConfigBtn" style="display: none;" onclick="resetSupabaseConfig()">組み込みの接続先に戻す</button>
+                        </div>
+                    </details>
+                </div>
+
                 <div class="settings-card-box" id="supabaseSetupBox" style="display: none;">
-                    <div class="settings-card-title">🛠️ データベースセットアップ (初回のみ)</div>
-                    <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 8px;">
-                        セキュリティ（RLS）のため、Supabaseの「SQL Editor」に以下を貼り付けて実行し、テーブルを作成してください。
+                    <details>
+                    <summary class="settings-card-title" style="cursor: pointer;">🛠️ データベースセットアップ（管理者向け）</summary>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); margin: 8px 0;">
+                        新しく Supabase を用意するときに、「SQL Editor」に以下を貼り付けて実行します。何度実行しても安全で、許可リスト（allowed_users）に登録済みの人は消えません。
                     </div>
                     <div style="font-size: 11.5px; color: #e67e22; font-weight: bold; margin-bottom: 8px;">
-                        ⚠️ 以前このアプリを設定済みの方へ：同期方式を更新しました（削除の同期・記録単位のマージ・サーバー時刻）。既存の環境でも下記SQLをもう一度すべて実行してください。実行するまでクラウド同期は一時停止し、入力は本体にのみ保存されます（データは失われません）。
+                        ⚠️ 本人の行だけ・許可リストの人だけが読み書きできる設定です。実行後、最後のコメントの手順で自分を許可リストに登録してください。登録するまで同期はできません（入力は本体に保存されます）。
                     </div>
                     <div style="font-size: 11.5px; color: #e67e22; font-weight: bold; margin-bottom: 8px;">
-                        ⚠️ images バケットは必ず非公開（public = false）のままにしてください。既に public = true で作成・変更してしまった場合は、下記の UPDATE 文を実行して非公開に戻してください。<br>
-                        <code>UPDATE storage.buckets SET public = false WHERE id = 'images';</code>
+                        ⚠️ Authentication の設定で「Allow new users to sign up」をオフにしてください。images バケットは必ず非公開（public = false）のままにしてください。
                     </div>
                     <textarea class="settings-text-input" id="supabaseSqlText" readonly style="height: 170px; font-family: monospace; font-size: 10px; background: rgba(0,0,0,0.2);">
--- Daily Journal セットアップ SQL（v2）
--- 新規でも既存環境でも、何度実行しても安全です。
+-- Daily Journal セットアップ SQL（v3・許可リスト付き）
+-- 新規でも既存環境でも、何度実行しても安全です（許可リストの登録は消えません）。
 -- 1. テーブル作成
 CREATE TABLE IF NOT EXISTS journals ( date_str TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, log_data JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (date_str, user_id) );
 CREATE TABLE IF NOT EXISTS notebooks ( id TEXT NOT NULL, user_id UUID REFERENCES auth.users NOT NULL, title TEXT, content TEXT, category TEXT, status TEXT, linked_note_ids JSONB, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, PRIMARY KEY (id, user_id) );
@@ -1053,21 +1064,30 @@ DROP TRIGGER IF EXISTS app_settings_server_updated_at ON app_settings;
 CREATE TRIGGER app_settings_server_updated_at BEFORE INSERT OR UPDATE ON app_settings FOR EACH ROW EXECUTE FUNCTION set_server_updated_at();
 CREATE INDEX IF NOT EXISTS journals_user_updated_idx ON journals (user_id, updated_at);
 CREATE INDEX IF NOT EXISTS notebooks_user_updated_idx ON notebooks (user_id, updated_at);
--- 4. RLS有効化 (本人以外はデータを一切読み書きできない)
+-- 4. 許可リスト（ポリシーを作らないので、アプリからは読み書きできない。管理画面の SQL Editor でだけ編集する）
+CREATE TABLE IF NOT EXISTS public.allowed_users ( user_id UUID PRIMARY KEY REFERENCES auth.users ON DELETE CASCADE, note TEXT );
+ALTER TABLE public.allowed_users ENABLE ROW LEVEL SECURITY;
+CREATE OR REPLACE FUNCTION public.is_allowed_user() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$ SELECT EXISTS (SELECT 1 FROM public.allowed_users WHERE user_id = auth.uid()); $$;
+-- 5. RLS有効化（本人の行だけ、かつ許可リストに載っている人だけが読み書きできる）
 ALTER TABLE journals ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "User can manage their own journals" ON journals;
-CREATE POLICY "User can manage their own journals" ON journals FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "User can manage their own journals" ON journals FOR ALL TO authenticated USING (auth.uid() = user_id AND (SELECT public.is_allowed_user())) WITH CHECK (auth.uid() = user_id AND (SELECT public.is_allowed_user()));
 ALTER TABLE notebooks ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "User can manage their own notebooks" ON notebooks;
-CREATE POLICY "User can manage their own notebooks" ON notebooks FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "User can manage their own notebooks" ON notebooks FOR ALL TO authenticated USING (auth.uid() = user_id AND (SELECT public.is_allowed_user())) WITH CHECK (auth.uid() = user_id AND (SELECT public.is_allowed_user()));
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "User can manage their own settings" ON app_settings;
-CREATE POLICY "User can manage their own settings" ON app_settings FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
--- 5. Storage バケット（非公開。画像はアプリが都度、署名付きURLで本人にだけ配信する）
+CREATE POLICY "User can manage their own settings" ON app_settings FOR ALL TO authenticated USING (auth.uid() = user_id AND (SELECT public.is_allowed_user())) WITH CHECK (auth.uid() = user_id AND (SELECT public.is_allowed_user()));
+-- 6. Storage バケット（非公開。画像はアプリが都度、署名付きURLで本人にだけ配信する）
 INSERT INTO storage.buckets (id, name, public) VALUES ('images', 'images', false) ON CONFLICT (id) DO UPDATE SET public = false;
 DROP POLICY IF EXISTS "User can manage their own images" ON storage.objects;
-CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USING (bucket_id = 'images' AND auth.uid() = owner);
+CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL TO authenticated USING (bucket_id = 'images' AND auth.uid() = owner AND (SELECT public.is_allowed_user())) WITH CHECK (bucket_id = 'images' AND auth.uid() = owner AND (SELECT public.is_allowed_user()));
+-- 7. 使う人を許可リストに登録する（アカウントを作ってから、メールアドレスを書き換えて実行）
+-- INSERT INTO public.allowed_users (user_id, note) SELECT id, '自分' FROM auth.users WHERE email = 'メールアドレス' ON CONFLICT (user_id) DO NOTHING;
+-- 登録済みの人の確認：
+-- SELECT u.email, a.note FROM public.allowed_users a JOIN auth.users u ON u.id = a.user_id;
                     </textarea>
+                    </details>
                 </div>
 
                 <div class="settings-card-box" id="supabaseMigrateBox" style="display: none;">
@@ -1161,15 +1181,15 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL USIN
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.25-7"></script>
-    <script src="main.js?v=2026.09.25-7"></script>
-    <script src="calendar.js?v=2026.09.25-7"></script>
-    <script src="notebooks.js?v=2026.09.25-7"></script>
-    <script src="ui.js?v=2026.09.25-7"></script>
-    <script src="tags.js?v=2026.09.25-7"></script>
+    <script src="purify.min.js?v=2026.09.26-1"></script>
+    <script src="main.js?v=2026.09.26-1"></script>
+    <script src="calendar.js?v=2026.09.26-1"></script>
+    <script src="notebooks.js?v=2026.09.26-1"></script>
+    <script src="ui.js?v=2026.09.26-1"></script>
+    <script src="tags.js?v=2026.09.26-1"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.25-7"></script>
+    <script src="supabase-sync.js?v=2026.09.26-1"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 
