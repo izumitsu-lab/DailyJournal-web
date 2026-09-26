@@ -130,17 +130,9 @@ function applyTemplateToAddModal(t, fresh) {
     } else pos = ta.value.length;
 
     _addTemplateId = t.id;
-    _showTemplateNote(t);
     // 追記画面を開いたときのフォーカス（約200ms後）より後に、カーソルを置き直す
     setTimeout(() => { try { ta.focus(); ta.setSelectionRange(pos, pos); } catch (e) {} }, fresh ? 260 : 0);
     if (typeof scheduleDraftSave === 'function') scheduleDraftSave();
-}
-function _showTemplateNote(t) {
-    const el = document.getElementById('addTemplateNote');
-    if (!el) return;
-    if (!t) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.textContent = `${tplIcon(t)} 定型文「${t.name}」から`;
-    el.style.display = '';
 }
 function openAddModalWithTemplate(id) {
     const t = templateDefs.find(x => x.id === id);
@@ -152,7 +144,7 @@ function openAddModalWithTemplate(id) {
 (function wrapAddModalForTemplates() {
     const origOpen = window.openAddModal;
     if (typeof origOpen === 'function') {
-        window.openAddModal = function (...args) { _addTemplateId = null; _showTemplateNote(null); return origOpen.apply(this, args); };
+        window.openAddModal = function (...args) { _addTemplateId = null; return origOpen.apply(this, args); };
     }
     // 保存できたら、その定型文で最後に記録したカテゴリを覚える（この端末だけ）
     const origSave = window.saveNewLog;
