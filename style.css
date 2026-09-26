@@ -2229,3 +2229,20 @@ body.light-theme .tag-chip-fav { border-color: rgba(0, 0, 0, 0.2); }
 .category-manage-actions { gap: 0; }
 .category-manage-actions .category-item-type-select { max-width: 92px; padding: 4px 4px; margin-right: 2px; }
 .category-manage-actions .settings-icon-btn, .category-manage-actions .category-manage-del-btn { padding: 4px 3px; }
+
+/* ===== 2026.09.26-7: カテゴリ削除時の行き先・表示の直し ===== */
+/* ボタンが1つだけの行（ノートのカテゴリ変更・ステータス変更・書き出しのキャンセル）は横いっぱいに */
+.modal-actions > .modal-btn:only-child { grid-column: 1 / -1; }
+.fate-content { max-width: 420px; }
+.fate-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+.fate-options { display: flex; flex-direction: column; gap: 8px; }
+.fate-option { display: flex; flex-direction: column; gap: 3px; text-align: left; background: var(--item-bg); border: 1.5px solid var(--item-border); border-radius: 14px; padding: 11px 13px; cursor: pointer; font-family: inherit; color: var(--text-primary); }
+.fate-option.selected { border-color: var(--accent-color); background: var(--accent-soft); }
+.fate-option-title { font-size: 14px; font-weight: 700; }
+.fate-option.selected .fate-option-title { color: var(--accent-color); }
+.fate-option-desc { font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; }
+.fate-dest { display: flex; flex-direction: column; gap: 5px; }
+.modal-btn.submit.danger-run { background-color: var(--reset-btn-bg); box-shadow: 0 4px 14px rgba(255, 69, 58, 0.35); }
+.modal-btn:disabled { opacity: 0.45; cursor: default; }
+.category-manage-item.is-orphan { border-color: rgba(230, 126, 34, 0.45); }
+.category-manage-actions .settings-icon-btn.del-btn { font-size: 13px; }

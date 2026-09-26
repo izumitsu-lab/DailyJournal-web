@@ -1839,7 +1839,7 @@ function renderSettingsCategoryList() {
                 </select>
                 <button type="button" class="settings-icon-btn edit-btn" onclick="startRenameCategory(${i})" title="カテゴリ名を変更">✏️</button>
                 ${getActiveCategories().length > 1 ? `<button type="button" class="settings-icon-btn archive-btn" onclick="archiveCategory(${i})" title="アーカイブ（新しく書くときとホームに出さない。あとで戻せます）">📦</button>` : ''}
-                ${categories.length > 1 ? `<button type="button" class="category-manage-del-btn" onclick="deleteCategory(${i})" title="削除">🗑️</button>` : ''}
+                ${categories.length > 1 ? `<button type="button" class="settings-icon-btn del-btn" onclick="deleteCategory(${i})" title="削除">🗑️</button>` : ''}
             </div>
         `;
         c.appendChild(r);
@@ -1854,6 +1854,15 @@ function renderSettingsCategoryList() {
             return `<div class="category-manage-item is-archived"><div class="category-manage-title-area"><span class="category-manage-name" title="${escapeHtml(cat.name)}">${escapeHtml(cat.name)}</span><span class="archived-meta">${escapeHtml(cat.type || '一般')}・${d.getFullYear()}/${d.getMonth() + 1}〜</span></div><div class="category-manage-actions"><button type="button" class="data-action-btn" onclick="unarchiveCategory(${i})" style="padding: 4px 10px; font-size: 12px;">戻す</button></div></div>`;
         }).join('') : '';
         arcBox.style.display = archived.length ? '' : 'none';
+    }
+    const orphanBox = document.getElementById('settingsOrphanCategoryList');
+    if (orphanBox) {
+        const orphans = findOrphanCategories();
+        orphanBox.innerHTML = orphans.length ? `<div class="tag-set-head">⚠️ カテゴリのない記録（以前に削除したカテゴリ）</div>` + orphans.map(o => {
+            const parts = []; if (o.usage.logs) parts.push(`記録${o.usage.logs}`); if (o.usage.notes) parts.push(`ノート${o.usage.notes}`);
+            return `<div class="category-manage-item is-archived is-orphan"><div class="category-manage-title-area"><span class="category-manage-name">${escapeHtml(o.name)}</span><span class="archived-meta">${parts.join('・')}件</span></div><div class="category-manage-actions"><button type="button" class="data-action-btn" data-orphan="${escapeHtml(o.name)}" style="padding: 4px 10px; font-size: 12px;">片付ける</button></div></div>`;
+        }).join('') : '';
+        orphanBox.style.display = orphans.length ? '' : 'none';
     }
 
     setupCategorySortable();
@@ -1992,17 +2001,166 @@ function addNewCategory() {
     renderSettingsTypeList();
 }
 
-function deleteCategory(i) {
-    const t = categories[i]; if (!confirm(`「${t.name}」を削除しますか？`)) return;
+// ------------------------------------------
+// カテゴリの削除（記録・ノートの行き先を選ぶ）
+// ------------------------------------------
+// ※以前は、記録が残ったままカテゴリだけが消え、その記録は下のメニューから選べなくなっていた（迷子）。
+//   記録やノートがあるときは、「アーカイブ」か「別のカテゴリへ移してから削除」を選んでもらう。
+function countCategoryUsage(name) {
+    let logs = 0;
+    for (const d of Object.keys(journalData)) for (const l of (journalData[d] || [])) if ((l.category || 'ライフログ') === name) logs++;
+    const notes = notebookData.filter(n => (n.category || 'ライフログ') === name).length;
+    return { logs, notes };
+}
+// 記録・ノート・定型文・タグの範囲・前回のカテゴリを from から to へ付け替える
+async function moveCategoryRecords(from, to) {
+    let jChanged = false, nChanged = false;
+    for (const d of Object.keys(journalData)) for (const l of (journalData[d] || [])) if ((l.category || 'ライフログ') === from) { l.category = to; jChanged = true; }
+    notebookData.forEach(n => { if ((n.category || 'ライフログ') === from) { n.category = to; nChanged = true; } });
+    retargetTemplateScopes('cat:' + from, 'cat:' + to);
+    if (tagDefs.some(d => d.scope === 'cat:' + from)) { tagDefs.forEach(d => { if (d.scope === 'cat:' + from) d.scope = 'cat:' + to; }); saveTagDefs(); }
+    if (typeof renameTemplateLastCategory === 'function') renameTemplateLastCategory(from, to);
+    if (currentFilter.mode === 'category' && currentFilter.value === from) { currentFilter = { mode: 'category', value: to }; updateCategoryButtonUI(); }
+    if (jChanged) await saveJournalData();
+    if (nChanged) await saveNotebookData();
+}
+function _removeCategoryAt(i) {
+    const t = categories[i]; if (!t) return;
     categories.splice(i, 1); saveCategories();
-    // そのカテゴリだけのタグは、タイプ全体のタグにする（タグ自体は消さない）
+    // そのカテゴリだけのタグ・定型文は、タイプ全体のものにする（タグ・定型文自体は消さない）
     retargetTemplateScopes('cat:' + t.name, t.type || '一般');
     if (tagDefs.some(d => d.scope === 'cat:' + t.name)) { tagDefs.forEach(d => { if (d.scope === 'cat:' + t.name) d.scope = t.type || '一般'; }); saveTagDefs(); }
     if (currentFilter.mode === 'category' && currentFilter.value === t.name) { currentFilter = { mode: 'all', value: '' }; updateCategoryButtonUI(); }
     else if (currentFilter.mode === 'type' && !categories.some(c => (c.type || "一般") === currentFilter.value)) { currentFilter = { mode: 'all', value: '' }; updateCategoryButtonUI(); }
-    renderSettingsCategoryList(); 
+}
+function _refreshAfterCategoryChange() {
+    renderSettingsCategoryList();
     renderSettingsTypeList();
+    updateCategoryButtonUI();
     renderRightCards(); if (sidebarMode === 'cal') updateSidebars();
+}
+function deleteCategory(i) {
+    const t = categories[i]; if (!t) return;
+    const u = countCategoryUsage(t.name);
+    if (!u.logs && !u.notes) {
+        if (!confirm(`「${t.name}」を削除しますか？\n（このカテゴリの記録・ノートはありません）`)) return;
+        _removeCategoryAt(i);
+        _refreshAfterCategoryChange();
+        return;
+    }
+    openCategoryFateModal('delete', t.name, u);
+}
+
+// 削除のときと、迷子の記録を片付けるときの共通の画面
+// mode: 'delete'（カテゴリを削除する） / 'orphan'（すでに削除されたカテゴリ名が記録に残っている）
+let _fateState = null;
+function _fateModalEl() {
+    let ov = document.getElementById('categoryFateModal');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.id = 'categoryFateModal';
+    ov.style.zIndex = '2550';
+    ov.onclick = e => { if (e.target === ov) closeModal('categoryFateModal'); };
+    ov.innerHTML = `
+        <div class="modal-content fate-content">
+            <div class="modal-header"><span id="fateTitle"></span></div>
+            <div class="fate-desc" id="fateDesc"></div>
+            <div class="fate-options" id="fateOptions"></div>
+            <div class="fate-dest" id="fateTypeBox">
+                <label class="tpl-edit-label" for="fateType">戻すタイプ</label>
+                <select class="settings-select" id="fateType"></select>
+            </div>
+            <div class="fate-dest" id="fateDestBox">
+                <label class="tpl-edit-label" for="fateDest">移す先のカテゴリ</label>
+                <select class="settings-select" id="fateDest"></select>
+            </div>
+            <div class="modal-actions">
+                <button class="modal-btn cancel" onclick="closeModal('categoryFateModal')">キャンセル</button>
+                <button class="modal-btn submit" id="fateRunBtn" onclick="runCategoryFate()">実行</button>
+            </div>
+        </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('click', e => {
+        const opt = e.target.closest ? e.target.closest('[data-fate]') : null;
+        if (opt) { _fateState.choice = opt.dataset.fate; _renderFateChoice(); }
+    });
+    return ov;
+}
+function openCategoryFateModal(mode, name, usage) {
+    _fateModalEl();
+    const others = getActiveCategories().filter(c => c.name !== name);
+    _fateState = { mode, name, usage, choice: mode === 'delete' ? 'archive' : 'restore' };
+    const parts = [];
+    if (usage.logs) parts.push(`記録 ${usage.logs}件`);
+    if (usage.notes) parts.push(`ノート ${usage.notes}件`);
+    document.getElementById('fateTitle').textContent = mode === 'delete' ? `「${name}」を削除` : `カテゴリのない記録：「${name}」`;
+    document.getElementById('fateDesc').textContent = mode === 'delete'
+        ? `このカテゴリには ${parts.join('・')} があります。記録が迷子にならないよう、どうするか選んでください。`
+        : `「${name}」はカテゴリ一覧にありませんが、${parts.join('・')} がこのカテゴリのまま残っています（以前に削除したカテゴリです）。`;
+    const opts = mode === 'delete'
+        ? [['archive', '📦 アーカイブする（おすすめ）', '記録・ノートはそのまま。新しく書くときとホームには出さず、あとで戻せます。'],
+           ['move', '➡️ 別のカテゴリへ移してから削除', '記録・ノート（と、このカテゴリだけのタグ・定型文）を選んだカテゴリへ移し、このカテゴリを消します。']]
+        : [['restore', '↩️ カテゴリとして戻す', 'この名前のカテゴリを作り直します（アーカイブした状態で戻すので、必要なら設定で「戻す」を押してください）。'],
+           ['move', '➡️ 別のカテゴリへ移す', '記録・ノートを選んだカテゴリへ移します。']];
+    document.getElementById('fateOptions').innerHTML = opts.map(([k, t, d]) => `<button type="button" class="fate-option" data-fate="${k}"><span class="fate-option-title">${t}</span><span class="fate-option-desc">${d}</span></button>`).join('');
+    document.getElementById('fateType').innerHTML = appTypes.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+    const sel = document.getElementById('fateDest');
+    sel.innerHTML = appTypes.map(ty => { const cs = others.filter(c => (c.type || '一般') === ty); return cs.length ? `<optgroup label="${escapeHtml(ty)}">${cs.map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('')}</optgroup>` : ''; }).join('');
+    // 同じタイプのカテゴリを初期値にする
+    const ty = categories.find(c => c.name === name);
+    const same = others.find(c => ty && c.type === ty.type);
+    if (same) sel.value = same.name;
+    _renderFateChoice();
+    openModal('categoryFateModal');
+}
+function _renderFateChoice() {
+    const s = _fateState;
+    document.querySelectorAll('#fateOptions .fate-option').forEach(b => b.classList.toggle('selected', b.dataset.fate === s.choice));
+    const hasDest = !!document.getElementById('fateDest').options.length;
+    document.getElementById('fateDestBox').style.display = s.choice === 'move' ? '' : 'none';
+    document.getElementById('fateTypeBox').style.display = s.choice === 'restore' ? '' : 'none';
+    const btn = document.getElementById('fateRunBtn');
+    btn.textContent = s.choice === 'archive' ? 'アーカイブする' : s.choice === 'restore' ? '戻す' : (s.mode === 'delete' ? '移して削除' : '移す');
+    btn.classList.toggle('danger-run', s.choice === 'move' && s.mode === 'delete');
+    btn.disabled = s.choice === 'move' && !hasDest;
+}
+async function runCategoryFate() {
+    const s = _fateState; if (!s) return;
+    const i = categories.findIndex(c => c.name === s.name);
+    if (s.choice === 'archive') {
+        closeModal('categoryFateModal');
+        if (i !== -1) archiveCategory(i);
+        return;
+    }
+    if (s.choice === 'restore') {
+        const type = document.getElementById('fateType').value || appTypes[0];
+        if (!categories.some(c => c.name === s.name)) categories.push({ name: s.name, type, archivedAt: new Date().toISOString() });
+        saveCategories();
+        closeModal('categoryFateModal');
+        _refreshAfterCategoryChange();
+        showToast(`「${s.name}」をカテゴリとして戻しました（アーカイブ済みの一覧にあります）`, 5000);
+        return;
+    }
+    const to = document.getElementById('fateDest').value;
+    if (!to) return;
+    const total = s.usage.logs + s.usage.notes;
+    if (!confirm(`「${s.name}」の ${total}件を「${to}」へ移${s.mode === 'delete' ? 'し、「' + s.name + '」を削除' : ''}します。よろしいですか？`)) return;
+    await moveCategoryRecords(s.name, to);
+    if (s.mode === 'delete') { const j = categories.findIndex(c => c.name === s.name); if (j !== -1) _removeCategoryAt(j); }
+    closeModal('categoryFateModal');
+    _refreshAfterCategoryChange();
+    showToast(`${total}件を「${to}」へ移しました${s.mode === 'delete' ? `。「${s.name}」は削除しました` : ''}`, 5000);
+}
+
+// 以前に削除したカテゴリ名のまま残っている記録・ノート（迷子）を探す
+function findOrphanCategories() {
+    const known = new Set(categories.map(c => c.name));
+    const m = new Map();
+    const add = (name, k) => { if (!name || known.has(name)) return; const u = m.get(name) || { logs: 0, notes: 0 }; u[k]++; m.set(name, u); };
+    for (const d of Object.keys(journalData)) for (const l of (journalData[d] || [])) add(l.category || 'ライフログ', 'logs');
+    notebookData.forEach(n => add(n.category || 'ライフログ', 'notes'));
+    return [...m.entries()].map(([name, usage]) => ({ name, usage }));
 }
 
 function openSearchModal() {
@@ -3960,4 +4118,11 @@ function fitCategoryChips(root) {
 }
 window.addEventListener('resize', () => {
     ['addCategoryChipsContainer', 'editCategoryChipsContainer', 'changeNotebookCategoryChipsContainer'].forEach(id => fitCategoryChips(document.getElementById(id)));
+});
+
+document.addEventListener('click', e => {
+    const b = e.target.closest ? e.target.closest('[data-orphan]') : null;
+    if (!b) return;
+    const o = findOrphanCategories().find(x => x.name === b.dataset.orphan);
+    if (o) openCategoryFateModal('orphan', o.name, o.usage);
 });
