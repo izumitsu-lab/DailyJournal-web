@@ -133,7 +133,10 @@ function _reportSyncError(e) {
 // 1. 同期状態の表示
 // ==========================================
 // 同期に問題があるときだけ、下のメニューの設定アイコンに点を付ける（オレンジ：要注意、赤：エラー）
+// ※点はバックアップのお知らせ（ui.js）と共用なので、同期の状態を覚えておき、表示は updateSettingsAlertDot にまとめる
 function _setSyncAlertDot(level, text) {
+    window._syncAlertState = { level: level || null, text: text || '' };
+    if (typeof updateSettingsAlertDot === 'function') { updateSettingsAlertDot(); return; }
     const dot = document.getElementById('syncAlertDot');
     if (dot) { dot.classList.toggle('warn', level === 'warn'); dot.classList.toggle('error', level === 'error'); }
     const btn = document.getElementById('btnSettings');
@@ -1544,3 +1547,30 @@ function _enqueueRemote(kind, row) {
         updateSyncStatusUI();
     }).catch(e => _reportSyncError(e));
 }
+
+// ==========================================
+// 10. クラウドの画像の使用量（設定 > データ の容量メーター用）
+// ==========================================
+// Storage の自分のフォルダの一覧から、枚数・合計サイズ・最近の増え方を数える（画像そのものはダウンロードしない）
+async function measureCloudImages() {
+    if (!supabaseClient || !supabaseUser) return null;
+    const objects = await _listAllImages(supabaseUser.id);
+    const now = Date.now();
+    let bytes = 0, recent = 0, oldest = now;
+    for (const o of objects) {
+        const size = (o.metadata && o.metadata.size) || 0;
+        bytes += size;
+        const t = Date.parse(o.created_at || o.updated_at || '');
+        if (!isNaN(t)) {
+            if (t < oldest) oldest = t;
+            if (now - t <= 30 * 86400000) recent += size;
+        }
+    }
+    // 1日あたりの増え方：直近30日の分から。使い始めて30日未満なら、使い始めからの平均（7日未満は出さない）
+    const spanDays = (now - oldest) / 86400000;
+    let perDay = null;
+    if (spanDays >= 30) perDay = recent / 30;
+    else if (spanDays >= 7) perDay = bytes / spanDays;
+    return { count: objects.length, bytes, perDay, checkedAt: new Date().toISOString(), userId: supabaseUser.id };
+}
+function isCloudLoggedIn() { return !!(supabaseClient && supabaseUser); }

@@ -18,7 +18,7 @@ window.addEventListener('orientationchange', () => {
 updateAppHeight();
 
 // アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
-const APP_VERSION = '2026.09.26-1';
+const APP_VERSION = '2026.09.26-2';
 function applyAppVersionLabel() {
     const el = document.getElementById('appVersionLabel');
     if (!el) return;
@@ -1231,8 +1231,31 @@ function requestPersistentStorage() {
     } catch (e) { /* 非対応ブラウザ */ }
 }
 
+// ==========================================
+// オフライン起動（Service Worker の登録）
+// ==========================================
+// アプリのファイルと外部ライブラリを端末にしまい、電波がなくても起動できるようにする（sw.js）。
+// ファイルを直接開いたとき（file://）は使えないので登録しない。
+function registerServiceWorker() {
+    if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
+    navigator.serviceWorker.register('sw.js').catch(e => console.warn('オフライン起動の準備に失敗しました', e));
+}
+// オフライン起動の準備ができているか（設定画面の表示用）
+async function getOfflineReadyState() {
+    if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return 'unsupported';
+    try {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (!reg || !reg.active) return 'preparing';
+        const keys = await caches.keys();
+        return keys.some(k => k.startsWith('dj-app-')) ? 'ready' : 'preparing';
+    } catch (e) { return 'unsupported'; }
+}
+
 async function startApp() {
     requestPersistentStorage();
+    // 起動の邪魔にならないよう、画面の読み込みが終わってから登録する
+    if (document.readyState === 'complete') setTimeout(registerServiceWorker, 1000);
+    else window.addEventListener('load', () => setTimeout(registerServiceWorker, 1000), { once: true });
     applyTheme(); 
     applyHideEmptyCardsSetting();
     applyGalleryColumnsSetting();

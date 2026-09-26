@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.26-1">
-    <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.26-1';</script>
+    <link rel="stylesheet" href="style.css?v=2026.09.26-2">
+    <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、sw.js の VERSION、上下の ?v= をそろえて更新する -->
+    <script>window.APP_HTML_VERSION = '2026.09.26-2';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -939,6 +939,42 @@
 
             <!-- データ管理 -->
             <div class="settings-page" id="settingsPageData">
+                <!-- 容量とバックアップ -->
+                <div class="settings-card-box storage-card" id="storageStatusBox">
+                    <div class="settings-card-title">💽 容量とバックアップ</div>
+
+                    <div class="storage-row">
+                        <div class="storage-row-head"><span class="storage-label">この端末</span><span class="storage-value" id="storageDeviceValue">…</span></div>
+                        <div class="storage-note" id="storageDeviceNote"></div>
+                    </div>
+
+                    <div class="storage-row" id="storageCloudRow">
+                        <div class="storage-row-head"><span class="storage-label">クラウドの画像</span><span class="storage-value" id="storageCloudValue">…</span></div>
+                        <div class="storage-meter" id="storageCloudMeter" style="display: none;"><div id="storageCloudMeterFill"></div></div>
+                        <div class="storage-note" id="storageCloudNote"></div>
+                        <button type="button" class="storage-link-btn" id="storageCloudRefreshBtn" onclick="refreshCloudStorageStatus(true)">もう一度調べる</button>
+                    </div>
+
+                    <div class="storage-row">
+                        <div class="storage-row-head"><span class="storage-label">オフライン起動</span><span class="storage-value" id="offlineReadyValue">…</span></div>
+                        <div class="storage-note" id="offlineReadyNote"></div>
+                    </div>
+
+                    <div class="storage-row">
+                        <div class="storage-row-head"><span class="storage-label">最後のバックアップ</span><span class="storage-value" id="backupLastValue">…</span></div>
+                        <div class="storage-note" id="backupLastNote"></div>
+                        <div class="storage-actions">
+                            <select class="settings-select" id="backupIntervalSelect" onchange="changeBackupInterval(this.value)" aria-label="バックアップのお知らせ">
+                                <option value="14">2週間ごとに知らせる</option>
+                                <option value="30">1か月ごとに知らせる</option>
+                                <option value="90">3か月ごとに知らせる</option>
+                                <option value="0">知らせない</option>
+                            </select>
+                            <button type="button" class="data-action-btn primary-btn" onclick="exportData()">今すぐ書き出す</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="option-group">
                     <div>
                         <span class="option-title">閲覧用アーカイブ出力</span>
@@ -1181,15 +1217,15 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL TO a
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.26-1"></script>
-    <script src="main.js?v=2026.09.26-1"></script>
-    <script src="calendar.js?v=2026.09.26-1"></script>
-    <script src="notebooks.js?v=2026.09.26-1"></script>
-    <script src="ui.js?v=2026.09.26-1"></script>
-    <script src="tags.js?v=2026.09.26-1"></script>
+    <script src="purify.min.js?v=2026.09.26-2"></script>
+    <script src="main.js?v=2026.09.26-2"></script>
+    <script src="calendar.js?v=2026.09.26-2"></script>
+    <script src="notebooks.js?v=2026.09.26-2"></script>
+    <script src="ui.js?v=2026.09.26-2"></script>
+    <script src="tags.js?v=2026.09.26-2"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.26-1"></script>
+    <script src="supabase-sync.js?v=2026.09.26-2"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 

@@ -634,6 +634,7 @@ function updateCategoryButtonUI() {
 function switchSettingsTab(t) {
     // ★ 'cloud' タブを配列に追加しました
     if (t === 'tags' && typeof renderSettingsTagList === 'function') renderSettingsTagList();
+    if (t === 'data') renderStorageStatus();
     ['general', 'types', 'categories', 'tags', 'data', 'cloud', 'sync'].forEach(p => {
         const b = document.getElementById('tabBtn' + p.charAt(0).toUpperCase() + p.slice(1));
         const e = document.getElementById('settingsPage' + p.charAt(0).toUpperCase() + p.slice(1));
@@ -1531,20 +1532,63 @@ async function saveEditedLog() {
 
 async function deleteFromEditModal() {
     const { dateStr: d, id } = currentEditTarget; if (!d || !id) return;
-    if (confirm("この記録を削除しますか？")) { 
+    if (confirm("この記録を削除しますか？")) {
         const i = (journalData[d] || []).findIndex(l => l.id === id);
-        if (i !== -1) journalData[d].splice(i, 1); 
-        if (journalData[d] && !journalData[d].length) delete journalData[d]; 
-        
+        // 取り消し用に、削除する記録をそのまま控えておく（画像は参照だけなので軽い）
+        const removed = i !== -1 ? JSON.parse(JSON.stringify(journalData[d][i])) : null;
+        if (i !== -1) journalData[d].splice(i, 1);
+        if (journalData[d] && !journalData[d].length) delete journalData[d];
+
         await saveJournalData();
-        
+        if (removed) showUndoDeleteToast(d, removed, i);
+
         clearDraft('edit', id); _setDraftBar('edit', '');
         closeModal('editModal'); 
         triggerSmoothViewSwitch(() => { 
             renderRightCards(); 
             if (sidebarMode === 'cal' && calendarScope !== 'notebooks') renderMiniCalendar(); 
-        }); 
+        });
     }
+}
+
+// ------------------------------------------
+// 記録の削除の取り消し
+// ------------------------------------------
+// 削除した直後だけ、画面下に「元に戻す」を出す。押すと同じIDのまま元の日・元の位置に戻す。
+// ※他の端末にはいったん削除が伝わるが、戻した記録の方が新しいので、他の端末でも元に戻る。
+const UNDO_DELETE_MS = 10000;
+function showUndoDeleteToast(dateStr, log, index) {
+    // 取り消せる間は、この記録の画像を端末内の掃除の対象から外しておく
+    for (const img of (log.images || [])) { const h = idbRefHash(img); if (h) _sessionStoredHashes.add(h); }
+    let box = document.getElementById('appToastBox');
+    if (!box) { box = document.createElement('div'); box.id = 'appToastBox'; box.className = 'app-toast-box'; document.body.appendChild(box); }
+    const t = document.createElement('div');
+    t.className = 'app-toast draft-toast undo-toast';
+    t.setAttribute('role', 'status');
+    const snippet = (log.text || '').replace(/\s+/g, ' ').trim().slice(0, 16) || (log.images && log.images.length ? '写真の記録' : '記録');
+    t.innerHTML = `<span class="draft-toast-text"></span><span class="draft-toast-actions"><button type="button" class="draft-toast-btn">元に戻す</button></span><span class="undo-toast-bar" style="animation-duration:${UNDO_DELETE_MS}ms"></span>`;
+    t.querySelector('.draft-toast-text').textContent = `削除しました：${snippet}`;
+    t.onclick = null;
+    const timer = setTimeout(() => t.remove(), UNDO_DELETE_MS);
+    t.querySelector('button').onclick = async (e) => {
+        e.stopPropagation();
+        clearTimeout(timer);
+        t.remove();
+        await undoDeleteLog(dateStr, log, index);
+    };
+    box.appendChild(t);
+}
+async function undoDeleteLog(dateStr, log, index) {
+    if (typeof isTabActive === 'function' && !isTabActive()) return;
+    const list = journalData[dateStr] = journalData[dateStr] || [];
+    if (!list.some(l => l.id === log.id)) {
+        list.splice(Math.max(0, Math.min(index, list.length)), 0, log);
+        if (!dateList.includes(dateStr)) { dateList.push(dateStr); dateList.sort(); }
+        await saveJournalData();
+    }
+    renderRightCards();
+    if (sidebarMode === 'cal' && calendarScope !== 'notebooks') renderMiniCalendar();
+    showToast('記録を元に戻しました', 2500);
 }
 
 function renderSettingsTypeList() {
@@ -2754,6 +2798,7 @@ async function exportData() {
         const n = new Date(); a.download = `journal_backup_${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}.json`;
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 60000);
+        markBackupDone();
     } catch (e) {
         console.error(e);
         alert("バックアップの書き出しに失敗しました: " + (e && e.message ? e.message : e));
@@ -3585,3 +3630,202 @@ function wireDrafts() {
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDrafts(); });
     window.addEventListener('pagehide', () => { flushDrafts(); });
 }
+
+
+// ==========================================
+// 容量メーターとバックアップのお知らせ（設定 > データ）
+// ==========================================
+// ・この端末：ブラウザが数えた、このアプリの使用量（記録・画像・アプリのファイルを含む）
+// ・クラウドの画像：Supabase Storage の自分のフォルダの合計（無料枠 1GB に対して）
+// ・バックアップ：この端末で最後に「データのエクスポート」をした日。間隔を過ぎたら設定アイコンに点を付けて知らせる
+const CLOUD_STORAGE_LIMIT_BYTES = 1000 * 1000 * 1000; // 無料枠 1GB（少なめに見積もる）
+const CLOUD_USAGE_WARN_RATIO = 0.8;
+const CLOUD_USAGE_KEY = 'daily_journal_cloud_usage';
+const BACKUP_LAST_KEY = 'daily_journal_last_backup_at';
+const BACKUP_INTERVAL_KEY = 'daily_journal_backup_interval';
+const BACKUP_NAG_KEY = 'daily_journal_backup_nag_at';
+const DAY_MS = 86400000;
+
+function formatBytes(b) {
+    if (!b) return '0KB';
+    if (b >= 1000 * 1000 * 1000) return (b / 1e9).toFixed(2) + 'GB';
+    if (b >= 1000 * 1000) return (b / 1e6).toFixed(1) + 'MB';
+    return Math.max(1, Math.round(b / 1000)) + 'KB';
+}
+function _daysAgoText(iso) {
+    const t = Date.parse(iso || '');
+    if (isNaN(t)) return '';
+    const d = Math.floor((Date.now() - t) / DAY_MS);
+    return d <= 0 ? '今日' : `${d}日前`;
+}
+
+// ---- バックアップ ----
+function getBackupIntervalDays() {
+    const v = parseInt(localStorage.getItem(BACKUP_INTERVAL_KEY) || '30', 10);
+    return [0, 14, 30, 90].includes(v) ? v : 30;
+}
+function changeBackupInterval(v) {
+    localStorage.setItem(BACKUP_INTERVAL_KEY, String(parseInt(v, 10) || 0));
+    updateSettingsAlertDot();
+    renderStorageStatus(false);
+}
+function markBackupDone() {
+    try { localStorage.setItem(BACKUP_LAST_KEY, new Date().toISOString()); } catch (e) {}
+    document.querySelectorAll('.app-toast[data-backup-nag]').forEach(t => t.remove());
+    updateSettingsAlertDot();
+    const page = document.getElementById('settingsPageData');
+    if (page && page.classList.contains('active')) renderStorageStatus(false);
+}
+function _hasAnyData() {
+    return Object.keys(journalData).length > 0 || notebookData.length > 0;
+}
+function isBackupOverdue() {
+    const days = getBackupIntervalDays();
+    if (!days || !_hasAnyData()) return false;
+    const last = Date.parse(localStorage.getItem(BACKUP_LAST_KEY) || '');
+    return isNaN(last) || (Date.now() - last) > days * DAY_MS;
+}
+
+// 設定アイコンの点：同期の問題（supabase-sync.js）とバックアップの期限切れをまとめて表示する
+function updateSettingsAlertDot() {
+    const sync = window._syncAlertState || { level: null, text: '' };
+    const backup = isBackupOverdue();
+    const level = sync.level === 'error' ? 'error' : (sync.level === 'warn' || backup ? 'warn' : null);
+    const dot = document.getElementById('syncAlertDot');
+    if (dot) { dot.classList.toggle('warn', level === 'warn'); dot.classList.toggle('error', level === 'error'); }
+    const notes = [];
+    if (sync.level) notes.push(`同期：${sync.text}`);
+    if (backup) notes.push('バックアップの時期です');
+    const btn = document.getElementById('btnSettings');
+    if (btn) btn.title = notes.length ? `設定（${notes.join('／')}）` : '設定';
+    const dataTab = document.getElementById('tabBtnData');
+    if (dataTab) dataTab.classList.toggle('has-alert', backup);
+}
+
+// 起動時：期限を過ぎていたら、画面下に控えめに知らせる（同じお知らせは1週間に1回まで）
+function maybeShowBackupReminder() {
+    if (!isBackupOverdue()) return;
+    const lastNag = Date.parse(localStorage.getItem(BACKUP_NAG_KEY) || '');
+    if (!isNaN(lastNag) && Date.now() - lastNag < 7 * DAY_MS) return;
+    localStorage.setItem(BACKUP_NAG_KEY, new Date().toISOString());
+    const last = localStorage.getItem(BACKUP_LAST_KEY);
+    const label = last ? `前回のバックアップから${_daysAgoText(last).replace('前', '')}たちました` : 'まだバックアップを書き出していません';
+    let box = document.getElementById('appToastBox');
+    if (!box) { box = document.createElement('div'); box.id = 'appToastBox'; box.className = 'app-toast-box'; document.body.appendChild(box); }
+    const t = document.createElement('div');
+    t.className = 'app-toast draft-toast'; t.setAttribute('role', 'status'); t.dataset.backupNag = '1';
+    t.innerHTML = `<span class="draft-toast-text"></span><span class="draft-toast-actions"><button type="button" class="draft-toast-btn ghost">あとで</button><button type="button" class="draft-toast-btn">書き出す</button></span>`;
+    t.querySelector('.draft-toast-text').textContent = '💾 ' + label;
+    const [bLater, bExport] = t.querySelectorAll('button');
+    bLater.onclick = (e) => { e.stopPropagation(); t.remove(); };
+    bExport.onclick = (e) => { e.stopPropagation(); t.remove(); exportData(); };
+    t.onclick = null;
+    box.appendChild(t);
+    setTimeout(() => t.remove(), 20000);
+}
+
+// ---- クラウドの使用量 ----
+function _loadCloudUsage() {
+    try { const v = JSON.parse(localStorage.getItem(CLOUD_USAGE_KEY) || 'null'); return v && typeof v === 'object' ? v : null; } catch (e) { return null; }
+}
+let _cloudCheckRunning = false;
+// force=false のときは、前回の結果が6時間以内ならそれを使う（一覧の取得にも通信量がかかるため）
+async function refreshCloudStorageStatus(force = false) {
+    if (_cloudCheckRunning || typeof measureCloudImages !== 'function' || !isCloudLoggedIn() || !navigator.onLine) { renderStorageStatus(false); return; }
+    const prev = _loadCloudUsage();
+    const fresh = prev && prev.userId === supabaseUser.id && (Date.now() - Date.parse(prev.checkedAt || 0)) < 6 * 3600000;
+    if (!force && fresh) { renderStorageStatus(false); return; }
+    _cloudCheckRunning = true;
+    const btn = document.getElementById('storageCloudRefreshBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '調べています…'; }
+    try {
+        const r = await measureCloudImages();
+        if (r) localStorage.setItem(CLOUD_USAGE_KEY, JSON.stringify(r));
+        if (r && r.bytes >= CLOUD_STORAGE_LIMIT_BYTES * CLOUD_USAGE_WARN_RATIO) {
+            showToast(`⚠️ クラウドの画像が無料枠の${Math.round(r.bytes / CLOUD_STORAGE_LIMIT_BYTES * 100)}%に達しています。設定 > クラウド の「不要な画像を削除」や、設定 > データ の「過去の写真をまとめて縮小」で空きを作れます。`, 15000);
+        }
+    } catch (e) {
+        console.warn('クラウドの使用量を調べられませんでした', e);
+    } finally {
+        _cloudCheckRunning = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'もう一度調べる'; }
+        renderStorageStatus(false);
+    }
+}
+
+function _remainingText(u) {
+    if (!u || !u.perDay || u.perDay < 1000) return u && u.perDay !== null && u.perDay < 1000 ? '最近はほとんど増えていません' : '';
+    const days = (CLOUD_STORAGE_LIMIT_BYTES - u.bytes) / u.perDay;
+    if (days <= 0) return '';
+    const span = days >= 730 ? `約${Math.floor(days / 365)}年` : days >= 60 ? `約${Math.floor(days / 30)}か月` : `約${Math.floor(days)}日`;
+    return `最近のペース（1日あたり約${formatBytes(u.perDay)}）なら、あと${span}使えます`;
+}
+
+// 表示を作る。withCheck=true なら、必要に応じてクラウドも調べ直す
+async function renderStorageStatus(withCheck = true) {
+    const $ = id => document.getElementById(id);
+    if (!$('storageStatusBox')) return;
+
+    // この端末
+    try {
+        const est = (navigator.storage && navigator.storage.estimate) ? await navigator.storage.estimate() : null;
+        $('storageDeviceValue').textContent = est && typeof est.usage === 'number' ? `約${formatBytes(est.usage)}` : '確認できません';
+        const imgCount = typeof _storedImageHashes !== 'undefined' ? _storedImageHashes.size : 0;
+        const persisted = (navigator.storage && navigator.storage.persisted) ? await navigator.storage.persisted().catch(() => false) : false;
+        $('storageDeviceNote').textContent = `画像 ${imgCount} 枚を含む（端末内では画像を文字で保存するため、実際の写真より約1.3倍大きく数えられます）` + (persisted ? '。空き容量が減っても、ブラウザが勝手に消さない設定になっています。' : '');
+    } catch (e) { $('storageDeviceValue').textContent = '確認できません'; }
+
+    // クラウドの画像
+    const loggedIn = typeof isCloudLoggedIn === 'function' && isCloudLoggedIn();
+    const meter = $('storageCloudMeter'), fill = $('storageCloudMeterFill'), refresh = $('storageCloudRefreshBtn');
+    if (!loggedIn) {
+        $('storageCloudValue').textContent = '未ログイン';
+        $('storageCloudNote').textContent = 'ログインすると、無料枠（1GB）に対する使用量を表示します。';
+        meter.style.display = 'none'; refresh.style.display = 'none';
+    } else {
+        refresh.style.display = '';
+        const u = _loadCloudUsage();
+        if (u && u.userId === supabaseUser.id) {
+            const ratio = Math.min(1, u.bytes / CLOUD_STORAGE_LIMIT_BYTES);
+            $('storageCloudValue').textContent = `${formatBytes(u.bytes)} / 1GB（${(ratio * 100).toFixed(ratio < 0.1 ? 1 : 0)}%）`;
+            meter.style.display = '';
+            fill.style.width = Math.max(1, ratio * 100) + '%';
+            meter.classList.toggle('is-warn', ratio >= CLOUD_USAGE_WARN_RATIO);
+            const lines = [`画像 ${u.count} 枚（使われていない画像も含む）`, _remainingText(u), `${_daysAgoText(u.checkedAt) === '今日' ? '今日' : _daysAgoText(u.checkedAt)}の時点`].filter(Boolean);
+            $('storageCloudNote').textContent = lines.join('・');
+        } else {
+            $('storageCloudValue').textContent = '…';
+            meter.style.display = 'none';
+            $('storageCloudNote').textContent = '調べています…';
+        }
+        if (withCheck) refreshCloudStorageStatus(false);
+    }
+
+    // オフライン起動
+    const st = typeof getOfflineReadyState === 'function' ? await getOfflineReadyState() : 'unsupported';
+    $('offlineReadyValue').textContent = st === 'ready' ? '✅ 準備できています' : st === 'preparing' ? '準備中…' : '使えません';
+    $('offlineReadyNote').textContent = st === 'ready' ? '電波がなくても起動できます（記録は本体に保存され、つながったときに送信されます）。'
+        : st === 'preparing' ? '一度オンラインで開いておくと、次回から電波がなくても起動できます。'
+        : 'この開き方ではオフライン起動は使えません（いつものURLから開くと使えます）。';
+
+    // バックアップ
+    const last = localStorage.getItem(BACKUP_LAST_KEY);
+    const overdue = isBackupOverdue();
+    $('backupLastValue').textContent = last ? `${_daysAgoText(last)}（${new Date(last).toLocaleDateString('ja-JP')}）` : 'まだありません';
+    $('backupLastValue').classList.toggle('is-warn', overdue);
+    $('backupLastNote').textContent = (overdue ? '⚠️ バックアップの時期です。' : '') + 'この端末で「データのエクスポート」をした日です。書き出したファイルは、パソコンやクラウドドライブなど、この端末以外の場所にも保存しておくと安心です。';
+    $('backupIntervalSelect').value = String(getBackupIntervalDays());
+    updateSettingsAlertDot();
+}
+
+// 起動後：点の表示と、バックアップのお知らせ。クラウドの使用量は1日1回だけ裏で調べる（80%を超えたら知らせる）
+(async function initStorageAndBackupNotices() {
+    try { await appDataReady; } catch (e) { return; }
+    updateSettingsAlertDot();
+    setTimeout(maybeShowBackupReminder, 5000);
+    setTimeout(() => {
+        const u = _loadCloudUsage();
+        const stale = !u || (Date.now() - Date.parse(u.checkedAt || 0)) > DAY_MS;
+        if (stale && typeof isCloudLoggedIn === 'function' && isCloudLoggedIn()) refreshCloudStorageStatus(true);
+    }, 30000);
+})();
