@@ -44,7 +44,7 @@ function isMentionedOnlyInCurrentView(log) {
 }
 
 // ------------------------------------------
-// 表示：本文の @カテゴリ名 を小さなグレーのタグにする（リンクもこれまでどおり）
+// 表示：本文の @カテゴリ名 を小さなボタンにする（リンクもこれまでどおり）
 // ------------------------------------------
 function renderLogText(text) {
     if (!text) return '';
@@ -71,10 +71,10 @@ function renderLogText(text) {
     }
     return out + plain(text.slice(last));
 }
-// 「〜から」の行（カテゴリを表示しているときに、よそのカテゴリの記録が並ぶ場合）。本文・写真・タグの後ろに小さく出す
+// 「〜で言及」の行（カテゴリを表示しているときに、よそのカテゴリの記録が並ぶ場合）
 function mentionViaHtml(log) {
     if (!isMentionedOnlyInCurrentView(log)) return '';
-    return `<div class="mention-via">${escapeHtml(log.category || 'ライフログ')}から</div>`;
+    return `<div class="mention-via"><span class="mention-via-at">@</span>${escapeHtml(log.category || 'ライフログ')}で言及</div>`;
 }
 // ボタンを押すと、そのカテゴリの表示へ
 document.addEventListener('click', e => {

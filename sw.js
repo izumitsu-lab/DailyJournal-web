@@ -7,7 +7,7 @@
 // ・Supabase との通信（記録・画像・ログイン）は一切しまわない（常に直接やりとりする）
 //
 // 版を上げるときは、index.html の ?v= と main.js の APP_VERSION と一緒に、下の VERSION もそろえる。
-const VERSION = '2026.09.26-9';
+const VERSION = '2026.09.26-8';
 const APP_CACHE = 'dj-app-' + VERSION;
 const CDN_CACHE = 'dj-cdn-v1';
 
