@@ -1587,6 +1587,7 @@ function renderCategoryChipsForChangeModal(currentCatName) {
         row.appendChild(chipsWrap);
         container.appendChild(row);
     });
+    if (typeof fitCategoryChips === 'function') fitCategoryChips(container);
 }
 
 async function applyNotebookCategoryChange(newCatName) {

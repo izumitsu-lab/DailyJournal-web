@@ -1388,6 +1388,7 @@ function renderModalCategoryChips(mode, cSel) {
         });
         r.appendChild(w); c.appendChild(r);
     });
+    fitCategoryChips(c);
     if (typeof renderTagSection === 'function') renderTagSection(mode);
 }
 
@@ -3832,3 +3833,33 @@ async function renderStorageStatus(withCheck = true) {
         if (stale && typeof isCloudLoggedIn === 'function' && isCloudLoggedIn()) refreshCloudStorageStatus(true);
     }, 30000);
 })();
+
+
+// ==========================================
+// カテゴリのボタン：4列で同じ幅に並べ、入りきらない名前だけ文字を小さくする
+// ==========================================
+// 並べ方は style.css（.category-chips-wrap を4列のマスにする）。ここでは、はみ出す文字だけを縮める（最小 9.5px）。
+let _chipMeasureCtx = null;
+function fitCategoryChips(root) {
+    if (!root) return;
+    if (!_chipMeasureCtx) _chipMeasureCtx = document.createElement('canvas').getContext('2d');
+    const ctx = _chipMeasureCtx;
+    const run = () => root.querySelectorAll('.category-chip').forEach(el => {
+        el.style.fontSize = '';
+        const cs = getComputedStyle(el);
+        const avail = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2;
+        if (avail <= 0) return; // まだ画面に出ていない
+        // ※ボタンの中で測ると、はみ出した分が正しく取れないので、同じ書体で文字の幅だけを測る
+        const measure = size => { ctx.font = `${cs.fontWeight} ${size}px ${cs.fontFamily}`; return ctx.measureText(el.textContent).width; };
+        let size = parseFloat(cs.fontSize) || 12.5;
+        const base = size;
+        while (measure(size) > avail && size > 9.5) size -= 0.5;
+        if (size !== base) el.style.fontSize = size + 'px';
+    });
+    run();
+    // 画面を開いた直後は幅が決まっていないことがあるので、表示されてからもう一度測る
+    requestAnimationFrame(() => requestAnimationFrame(run));
+}
+window.addEventListener('resize', () => {
+    ['addCategoryChipsContainer', 'editCategoryChipsContainer', 'changeNotebookCategoryChipsContainer'].forEach(id => fitCategoryChips(document.getElementById(id)));
+});

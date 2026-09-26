@@ -2199,3 +2199,13 @@ body.light-theme .tag-chip-fav { border-color: rgba(0, 0, 0, 0.2); }
 .tpl-edit-tagsg { display: flex; flex-wrap: wrap; gap: 5px; }
 .tpl-edit-tagsg:empty { display: none; }
 @media (hover: none) and (pointer: coarse) { #tplEditName, #tplEditTags, #tplEditIcon, .tpl-edit-text { font-size: 16px !important; } }
+
+/* ===== 2026.09.26-5: カテゴリのボタンを4列・同じ幅で並べる ===== */
+.category-chips-wrap { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.category-chip { justify-content: center; min-width: 0; padding: 7px 3px; font-size: 12.5px; white-space: nowrap; overflow: hidden; }
+@media (max-width: 500px) {
+    /* iPhone ではボタンに使える幅を増やすため、画面の左右の余白を少し詰める */
+    #addModal, #editModal, #changeNotebookCategoryModal { padding-left: 8px; padding-right: 8px; }
+    #addModal .modal-content, #editModal .modal-content, #changeNotebookCategoryModal .modal-content { padding-left: 14px; padding-right: 14px; }
+    #addModal .category-picker-section, #editModal .category-picker-section, #changeNotebookCategoryModal .category-picker-section { padding: 10px; }
+}
