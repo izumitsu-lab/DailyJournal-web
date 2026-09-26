@@ -435,6 +435,8 @@ function matchesCurrentFilter(item) {
         }
         // ホームでは、ホームに出さないタイプを除く
         if (currentFilter.mode === 'all' && !isTypeShownOnHome(getLogCategoryType(item.category || "ライフログ"))) return false;
+        // ホームでは、アーカイブしたカテゴリも除く（「すべて表示」やカテゴリを選べば見られる）
+        if (currentFilter.mode === 'all' && isCategoryArchived(item.category || "ライフログ")) return false;
         return true;
     }
     
@@ -597,7 +599,8 @@ function renderCategoryFilterModal() {
     homeBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px; min-width: 0;"><span style="font-size: 18px;">🏠</span><div class="cat-filter-all-text"><span class="cat-filter-name">ホーム</span></div></div>`;
     homeBtn.onclick = () => selectFilter('all'); c.appendChild(homeBtn);
 
-    const types = appTypes.filter(t => categories.some(ca => (ca.type || "一般") === t));
+    const activeCats = getActiveCategories();
+    const types = appTypes.filter(t => activeCats.some(ca => (ca.type || "一般") === t));
     types.forEach(t => {
         const card = document.createElement('div'); card.className = 'cat-filter-type-card';
         const isT = currentFilter.mode === 'type' && currentFilter.value === t;
@@ -607,7 +610,7 @@ function renderCategoryFilterModal() {
         row.onclick = () => selectFilter('type', t); card.appendChild(row);
 
         const wrap = document.createElement('div'); wrap.className = 'cat-filter-chips-grid';
-        categories.filter(ca => (ca.type || "一般") === t).forEach(cat => {
+        activeCats.filter(ca => (ca.type || "一般") === t).forEach(cat => {
             const isC = currentFilter.mode === 'category' && currentFilter.value === cat.name;
             const b = document.createElement('button'); b.className = `cat-filter-subchip ${isC ? 'selected' : ''}`;
             b.innerHTML = `<span>${escapeHtml(cat.name)}</span>`;
@@ -621,7 +624,32 @@ function renderCategoryFilterModal() {
     allBtn.className = `cat-filter-all-btn cat-filter-everything-btn ${currentFilter.mode === 'everything' ? 'selected' : ''}`;
     allBtn.innerHTML = `<div style="display: flex; align-items: center; gap: 9px; min-width: 0;"><span style="font-size: 18px;">🌐</span><div class="cat-filter-all-text"><span class="cat-filter-name">すべて表示</span></div></div>`;
     allBtn.onclick = () => selectFilter('everything'); c.appendChild(allBtn);
+
+    // さらに下：アーカイブしたカテゴリ（ふだんは畳んでおき、選んでいるときだけ開いておく）
+    const archived = getArchivedCategories();
+    if (archived.length) {
+        const selArchived = currentFilter.mode === 'category' && isCategoryArchived(currentFilter.value);
+        if (selArchived) _archiveFilterOpen = true;
+        const box = document.createElement('div'); box.className = 'cat-filter-archive';
+        const head = document.createElement('button'); head.type = 'button';
+        head.className = `cat-filter-archive-head ${_archiveFilterOpen ? 'is-open' : ''}`;
+        head.innerHTML = `<span>📦 アーカイブ（${archived.length}）</span><span class="cat-filter-archive-chev">▾</span>`;
+        head.onclick = () => { _archiveFilterOpen = !_archiveFilterOpen; renderCategoryFilterModal(); };
+        box.appendChild(head);
+        if (_archiveFilterOpen) {
+            const wrap = document.createElement('div'); wrap.className = 'cat-filter-chips-grid';
+            archived.forEach(cat => {
+                const isC = currentFilter.mode === 'category' && currentFilter.value === cat.name;
+                const b = document.createElement('button'); b.className = `cat-filter-subchip is-archived ${isC ? 'selected' : ''}`;
+                b.innerHTML = `<span>${escapeHtml(cat.name)}</span>`;
+                b.onclick = () => selectFilter('category', cat.name); wrap.appendChild(b);
+            });
+            box.appendChild(wrap);
+        }
+        c.appendChild(box);
+    }
 }
+let _archiveFilterOpen = false;
 
 function updateCategoryButtonUI() {
     const b = document.getElementById('btnCategory'), l = document.getElementById('btnCategoryLabel');
@@ -1366,28 +1394,31 @@ function handleMainActionClick() {
 
 function renderModalCategoryChips(mode, cSel) {
     const c = document.getElementById(mode === 'add' ? 'addCategoryChipsContainer' : 'editCategoryChipsContainer'); c.innerHTML = "";
-    const types = appTypes.filter(t => categories.some(ca => (ca.type || "一般") === t));
-    types.forEach(t => {
+    // アーカイブしたカテゴリは出さない。ただし編集中の記録のもとのカテゴリだけは「アーカイブ」の段に出す（外れたり勝手に変わったりしないように）
+    let keepArchived = null;
+    if (mode === 'edit' && currentEditTarget && currentEditTarget.id) {
+        const log = findLogById(currentEditTarget.dateStr, currentEditTarget.id);
+        if (log && isCategoryArchived(log.category)) keepArchived = log.category;
+    }
+    const pick = (cat) => {
+        if (mode === 'add') { selectedAddCategory = cat.name; renderModalCategoryChips('add', selectedAddCategory); updateMsgTypeVisibility('add', cat.name); }
+        else { selectedEditCategory = cat.name; renderModalCategoryChips('edit', selectedEditCategory); updateMsgTypeVisibility('edit', cat.name); }
+    };
+    const addRow = (label, icon, list, archived) => {
         const r = document.createElement('div'); r.className = 'category-type-row';
-        r.innerHTML = `<div style="display: flex; align-items: center; gap: 5px;"><span style="font-size: 12px;">${getTypeIcon(t)}</span><span class="category-type-name">${escapeHtml(t)}</span></div>`;
+        r.innerHTML = `<div style="display: flex; align-items: center; gap: 5px;"><span style="font-size: 12px;">${icon}</span><span class="category-type-name">${escapeHtml(label)}</span></div>`;
         const w = document.createElement('div'); w.className = 'category-chips-wrap';
-        categories.filter(ca => (ca.type || "一般") === t).forEach(cat => {
-            const b = document.createElement('button'); b.type = 'button'; b.className = `category-chip ${cat.name === cSel ? 'selected' : ''}`; b.textContent = cat.name;
-            b.onclick = () => { 
-                if (mode === 'add') { 
-                    selectedAddCategory = cat.name; 
-                    renderModalCategoryChips('add', selectedAddCategory); 
-                    updateMsgTypeVisibility('add', cat.name); 
-                } else { 
-                    selectedEditCategory = cat.name; 
-                    renderModalCategoryChips('edit', selectedEditCategory); 
-                    updateMsgTypeVisibility('edit', cat.name); 
-                } 
-            };
+        list.forEach(cat => {
+            const b = document.createElement('button'); b.type = 'button';
+            b.className = `category-chip ${archived ? 'is-archived' : ''} ${cat.name === cSel ? 'selected' : ''}`; b.textContent = cat.name;
+            b.onclick = () => pick(cat);
             w.appendChild(b);
         });
         r.appendChild(w); c.appendChild(r);
-    });
+    };
+    const active = getActiveCategories();
+    appTypes.filter(t => active.some(ca => (ca.type || "一般") === t)).forEach(t => addRow(t, getTypeIcon(t), active.filter(ca => (ca.type || "一般") === t), false));
+    if (keepArchived) addRow('アーカイブ', '📦', categories.filter(ca => ca.name === keepArchived), true);
     fitCategoryChips(c);
     if (typeof renderTagSection === 'function') renderTagSection(mode);
 }
@@ -1397,9 +1428,15 @@ function openAddModal() {
     document.getElementById('journalInputText').value = "";
     currentAddTags = []; const _ti = document.getElementById('addTagInput'); if (_ti) _ti.value = '';
     
-    if (currentFilter.mode === 'category' && categories.some(c => c.name === currentFilter.value)) selectedAddCategory = currentFilter.value;
-    else if (currentFilter.mode === 'type') { const f = categories.find(c => (c.type || "一般") === currentFilter.value); selectedAddCategory = f ? f.name : "ライフログ"; }
+    const _active = getActiveCategories();
+    if (currentFilter.mode === 'category' && _active.some(c => c.name === currentFilter.value)) selectedAddCategory = currentFilter.value;
+    else if (currentFilter.mode === 'type' || currentFilter.mode === 'category') {
+        const ty = currentFilter.mode === 'type' ? currentFilter.value : getLogCategoryType(currentFilter.value);
+        const f = _active.find(c => (c.type || "一般") === ty); selectedAddCategory = f ? f.name : "ライフログ";
+    }
     else selectedAddCategory = "ライフログ";
+    // 「ライフログ」もアーカイブ・削除されていたら、使えるカテゴリの先頭にする
+    if (!_active.some(c => c.name === selectedAddCategory) && _active.length) selectedAddCategory = _active[0].name;
     
     renderModalCategoryChips('add', selectedAddCategory); 
     setMessageType('add', 'normal'); 
@@ -1773,7 +1810,7 @@ function renderSettingsCategoryList() {
     if (!c) return;
     c.innerHTML = ""; 
     const indicator = document.getElementById('catCountIndicator');
-    if (indicator) indicator.textContent = `${categories.length}/30`;
+    if (indicator) indicator.textContent = `${getActiveCategories().length}/30`; // アーカイブ済みは数えない
 
     const newCatTypeSelect = document.getElementById('newCatType');
     if (newCatTypeSelect) {
@@ -1783,6 +1820,7 @@ function renderSettingsCategoryList() {
     }
 
     categories.forEach((cat, i) => {
+        if (cat.archivedAt) return; // アーカイブ済みは下の段にまとめる
         const r = document.createElement('div'); 
         r.className = 'category-manage-item';
         r.id = `catManageItem_${i}`;
@@ -1800,13 +1838,69 @@ function renderSettingsCategoryList() {
                     ${typeOptionsHtml}
                 </select>
                 <button type="button" class="settings-icon-btn edit-btn" onclick="startRenameCategory(${i})" title="カテゴリ名を変更">✏️</button>
+                ${getActiveCategories().length > 1 ? `<button type="button" class="settings-icon-btn archive-btn" onclick="archiveCategory(${i})" title="アーカイブ（新しく書くときとホームに出さない。あとで戻せます）">📦</button>` : ''}
                 ${categories.length > 1 ? `<button type="button" class="category-manage-del-btn" onclick="deleteCategory(${i})" title="削除">🗑️</button>` : ''}
             </div>
         `;
         c.appendChild(r);
     });
 
+    // アーカイブ済み（戻す）
+    const arcBox = document.getElementById('settingsArchivedCategoryList');
+    if (arcBox) {
+        const archived = categories.map((cat, i) => ({ cat, i })).filter(x => x.cat.archivedAt);
+        arcBox.innerHTML = archived.length ? `<div class="tag-set-head">📦 アーカイブ済み（${archived.length}）</div>` + archived.map(({ cat, i }) => {
+            const d = new Date(cat.archivedAt);
+            return `<div class="category-manage-item is-archived"><div class="category-manage-title-area"><span class="category-manage-name" title="${escapeHtml(cat.name)}">${escapeHtml(cat.name)}</span><span class="archived-meta">${escapeHtml(cat.type || '一般')}・${d.getFullYear()}/${d.getMonth() + 1}〜</span></div><div class="category-manage-actions"><button type="button" class="data-action-btn" onclick="unarchiveCategory(${i})" style="padding: 4px 10px; font-size: 12px;">戻す</button></div></div>`;
+        }).join('') : '';
+        arcBox.style.display = archived.length ? '' : 'none';
+    }
+
     setupCategorySortable();
+}
+
+// ------------------------------------------
+// カテゴリのアーカイブ・戻す
+// ------------------------------------------
+function _afterCategoryArchiveChange() {
+    saveCategories();
+    renderSettingsCategoryList();
+    renderSettingsTypeList();
+    updateCategoryButtonUI();
+    if (hideEmptyCards && calendarScope !== 'notebooks') adjustActiveDateToLatestLog();
+    renderRightCards();
+    if (sidebarMode === 'cal') updateSidebars();
+}
+function archiveCategory(i) {
+    const cat = categories[i];
+    if (!cat || cat.archivedAt) return;
+    if (getActiveCategories().length <= 1) { alert("すべてのカテゴリをアーカイブすることはできません。"); return; }
+    const name = cat.name;
+    cat.archivedAt = new Date().toISOString();
+    _afterCategoryArchiveChange();
+    showActionUndoToast(`${name} をアーカイブしました`, () => { const c = categories.find(x => x.name === name); if (c) { delete c.archivedAt; _afterCategoryArchiveChange(); } });
+}
+function unarchiveCategory(i) {
+    const cat = categories[i];
+    if (!cat || !cat.archivedAt) return;
+    if (getActiveCategories().length >= 30) { alert("使っているカテゴリが30件あるため戻せません。ほかのカテゴリをアーカイブしてから戻してください。"); return; }
+    delete cat.archivedAt;
+    _afterCategoryArchiveChange();
+    showToast(`${cat.name} を戻しました`, 2500);
+}
+// 「元に戻す」付きのお知らせ（10秒）
+function showActionUndoToast(text, onUndo, ms = 10000) {
+    let box = document.getElementById('appToastBox');
+    if (!box) { box = document.createElement('div'); box.id = 'appToastBox'; box.className = 'app-toast-box'; document.body.appendChild(box); }
+    const t = document.createElement('div');
+    t.className = 'app-toast draft-toast undo-toast';
+    t.setAttribute('role', 'status');
+    t.innerHTML = `<span class="draft-toast-text"></span><span class="draft-toast-actions"><button type="button" class="draft-toast-btn">元に戻す</button></span><span class="undo-toast-bar" style="animation-duration:${ms}ms"></span>`;
+    t.querySelector('.draft-toast-text').textContent = text;
+    t.onclick = null;
+    const timer = setTimeout(() => t.remove(), ms);
+    t.querySelector('button').onclick = (e) => { e.stopPropagation(); clearTimeout(timer); t.remove(); onUndo(); };
+    box.appendChild(t);
 }
 
 function setupCategorySortable() {
@@ -1821,9 +1915,13 @@ function setupCategorySortable() {
         chosenClass: 'sortable-chosen',
         onEnd: function(evt) {
             if (evt.oldIndex === evt.newIndex) return;
-            const moved = categories.splice(evt.oldIndex, 1)[0];
-            categories.splice(evt.newIndex, 0, moved);
+            // アーカイブ済みは一覧に出ていないので、表示中の並びで使っている分だけを並べ替え、アーカイブ済みは元の位置に残す
+            const order = Array.from(el.querySelectorAll('.category-manage-item')).map(r => r.dataset.id);
+            const byName = new Map(categories.map(c => [c.name, c]));
+            let k = 0;
+            categories = categories.map(c => c.archivedAt ? c : (byName.get(order[k++]) || c));
             saveCategories();
+            renderSettingsCategoryList();
             updateCategoryButtonUI();
             renderRightCards();
             if (sidebarMode === 'cal') updateSidebars();
@@ -1881,12 +1979,12 @@ function updateCategoryType(i, t) {
 }
 
 function addNewCategory() {
-    if (categories.length >= 30) { alert("最大30件までです。"); return; }
+    if (getActiveCategories().length >= 30) { alert("使っているカテゴリは最大30件までです。使わなくなったカテゴリはアーカイブできます。"); return; }
     const n = document.getElementById('newCatName').value.trim(); 
     const selEl = document.getElementById('newCatType');
     const t = selEl ? selEl.value : (appTypes[0] || "一般");
     if (!n) { alert("カテゴリ名を入力してください。"); return; }
-    if (categories.some(c => c.name === n)) { alert("同名が存在します。"); return; }
+    if (categories.some(c => c.name === n)) { alert(isCategoryArchived(n) ? "同じ名前のカテゴリがアーカイブ済みにあります。そちらを「戻す」で使えます。" : "同名が存在します。"); return; }
     categories.push({ name: n, type: t }); 
     saveCategories(); 
     document.getElementById('newCatName').value = "";
@@ -2827,7 +2925,7 @@ function importData(e) {
                 }
                 if (confirm("バックアップの内容を現在のデータに統合しますか？\n（同じ記録・ノートはバックアップの内容で上書きされます。現在のデータは削除されません）")) {
                     if (imp.appTypes && Array.isArray(imp.appTypes)) { appTypes = imp.appTypes.filter(t => typeof t === 'string' && t.trim()); saveAppTypes(); }
-                    if (imp.categories && Array.isArray(imp.categories)) { categories = imp.categories.filter(c => c && typeof c.name === 'string' && c.name.trim()).map(c => ({ name: c.name, type: typeof c.type === 'string' ? c.type : '一般' })); saveCategories(); }
+                    if (imp.categories && Array.isArray(imp.categories)) { categories = imp.categories.filter(c => c && typeof c.name === 'string' && c.name.trim()).map(c => { const o = { name: c.name, type: typeof c.type === 'string' ? c.type : '一般' }; if (typeof c.archivedAt === 'string' && !isNaN(Date.parse(c.archivedAt))) o.archivedAt = c.archivedAt; return o; }); saveCategories(); }
                     if (imp.typeSlackSettings && typeof imp.typeSlackSettings === 'object') { typeSlackSettings = imp.typeSlackSettings; saveTypeSlackSettings(); }
                     if (imp.typeNotebookSettings && typeof imp.typeNotebookSettings === 'object') { typeNotebookSettings = imp.typeNotebookSettings; saveTypeNotebookSettings(); }
                     if (Array.isArray(imp.tagDefs)) { sanitizeTagDefs(imp.tagDefs).forEach(d => { const ex = tagDefs.find(x => x.name === d.name); if (ex) Object.assign(ex, d); else tagDefs.push(d); }); saveTagDefs(); }

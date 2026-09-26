@@ -2209,3 +2209,23 @@ body.light-theme .tag-chip-fav { border-color: rgba(0, 0, 0, 0.2); }
     #addModal .modal-content, #editModal .modal-content, #changeNotebookCategoryModal .modal-content { padding-left: 14px; padding-right: 14px; }
     #addModal .category-picker-section, #editModal .category-picker-section, #changeNotebookCategoryModal .category-picker-section { padding: 10px; }
 }
+
+/* ===== 2026.09.26-6: カテゴリのアーカイブ ===== */
+.category-chip.is-archived { border-style: dashed; }
+.category-chip.is-archived:not(.selected) { color: var(--text-secondary); }
+.settings-icon-btn.archive-btn { font-size: 13px; }
+.archived-category-list { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--item-border); max-height: none; }
+.category-manage-item.is-archived { background: transparent; border-style: dashed; padding-left: 10px; }
+.category-manage-item.is-archived .category-manage-name { color: var(--text-secondary); }
+.archived-meta { font-size: 11px; color: var(--text-secondary); white-space: nowrap; margin-left: 6px; }
+.cat-filter-archive { display: flex; flex-direction: column; gap: 8px; }
+.cat-filter-archive-head { display: flex; align-items: center; justify-content: space-between; width: 100%; background: transparent; border: 1px dashed var(--item-border); border-radius: 14px; padding: 11px 16px; font-family: inherit; font-size: 14px; font-weight: 700; color: var(--text-secondary); cursor: pointer; }
+.cat-filter-archive-chev { transition: transform 0.2s; }
+.cat-filter-archive-head.is-open .cat-filter-archive-chev { transform: rotate(180deg); }
+.cat-filter-subchip.is-archived:not(.selected) { border-style: dashed; color: var(--text-secondary); }
+/* アーカイブのボタンが増えた分、名前が切れないように行を詰める */
+.category-manage-item { gap: 4px; }
+.category-manage-title-area { min-width: 5.5em; }
+.category-manage-actions { gap: 0; }
+.category-manage-actions .category-item-type-select { max-width: 92px; padding: 4px 4px; margin-right: 2px; }
+.category-manage-actions .settings-icon-btn, .category-manage-actions .category-manage-del-btn { padding: 4px 3px; }

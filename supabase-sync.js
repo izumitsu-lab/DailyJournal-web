@@ -825,7 +825,11 @@ function sanitizeSettingsData(s) {
         const seen = new Set();
         out.categories = s.categories
             .filter(c => c && str(c.name) && !seen.has(c.name) && seen.add(c.name))
-            .map(c => ({ name: c.name, type: str(c.type) ? c.type : '一般' }));
+            .map(c => {
+                const o = { name: c.name, type: str(c.type) ? c.type : '一般' };
+                if (typeof c.archivedAt === 'string' && !isNaN(Date.parse(c.archivedAt))) o.archivedAt = c.archivedAt; // アーカイブ
+                return o;
+            });
     }
     if (s.typeSlackSettings) out.typeSlackSettings = boolMap(s.typeSlackSettings);
     if (s.typeNotebookSettings) out.typeNotebookSettings = boolMap(s.typeNotebookSettings);
@@ -934,7 +938,7 @@ function _mergeBoolMap(base, local, remote) {
 function _mergeSettings(base, local, remote) {
     const typePick = (b, l, r) => r;
     const catPick = (b, l, r) => {
-        if (l && (!b || l.type !== b.type)) return l;   // この端末で追加・所属タイプ変更
+        if (l && (!b || l.type !== b.type || (l.archivedAt || '') !== (b.archivedAt || ''))) return l;   // この端末で追加・所属タイプ変更・アーカイブ
         return r || l;
     };
     return {

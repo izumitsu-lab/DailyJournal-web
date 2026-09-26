@@ -18,7 +18,7 @@ window.addEventListener('orientationchange', () => {
 updateAppHeight();
 
 // アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
-const APP_VERSION = '2026.09.26-5';
+const APP_VERSION = '2026.09.26-6';
 function applyAppVersionLabel() {
     const el = document.getElementById('appVersionLabel');
     if (!el) return;
@@ -1111,6 +1111,11 @@ function retargetTemplateScopes(from, to) {
 }
 function saveTagDefs() { if (_tabInactive) return; localStorage.setItem('daily_journal_tags', JSON.stringify(tagDefs)); markSettingsEdited(); }
 function saveTypeHomeSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_home', JSON.stringify(typeHomeSettings)); markSettingsEdited(); }
+// カテゴリのアーカイブ：卒業・修了などで使わなくなったカテゴリに「しまった日時」（archivedAt）を付ける。
+// 記録・ノート・タグ・定型文はそのまま。新しく書くときの選択肢とホームには出さない。戻せば元どおり。
+function isCategoryArchived(name) { const c = categories.find(x => x.name === name); return !!(c && c.archivedAt); }
+function getActiveCategories() { return categories.filter(c => !c.archivedAt); }
+function getArchivedCategories() { return categories.filter(c => c.archivedAt); }
 function isTypeShownOnHome(type) { return typeHomeSettings[type] !== false; }
 function getHomeHiddenTypes() { return appTypes.filter(t => !isTypeShownOnHome(t)); }
 function isSlackEnabledForType(type) { return typeSlackSettings[type] !== undefined ? !!typeSlackSettings[type] : false; }

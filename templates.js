@@ -28,6 +28,8 @@ function tplScopeHeading(scope) {
     return c !== null ? `${c}だけ` : `${scope}全体`;
 }
 function tplIcon(t) { return t.icon || '📝'; }
+// アーカイブしたカテゴリだけの定型文は、一覧に出さない（カテゴリを戻せばまた出る）
+function _tplUsable(t) { const c = scopeCat(t.scope); return c === null || !isCategoryArchived(c); }
 function _tplSort(list) {
     return list.slice().sort((a, b) => (scopeLevel(a.scope) - scopeLevel(b.scope)) || (templateDefs.indexOf(a) - templateDefs.indexOf(b)));
 }
@@ -35,6 +37,7 @@ function _tplSort(list) {
 function getTemplatesForFilter() {
     const f = currentFilter;
     return _tplSort(templateDefs.filter(t => {
+        if (!_tplUsable(t)) return false;
         if (f.mode === 'category') return isTagVisibleFor(t, f.value);
         if (t.scope === TAG_COMMON) return true;
         const ty = tplTypeOf(t);
@@ -45,7 +48,7 @@ function getTemplatesForFilter() {
 }
 // 追記画面のアイコン：画面で選んでいるカテゴリに合うもの（タグの候補と同じ考え方）
 function getTemplatesForCategory(cat) {
-    return _tplSort(templateDefs.filter(t => isTagVisibleFor(t, cat)));
+    return _tplSort(templateDefs.filter(t => _tplUsable(t) && isTagVisibleFor(t, cat)));
 }
 
 // ------------------------------------------
@@ -73,7 +76,7 @@ function renameTemplateLastCategory(from, to) {
 // 1. 「〜だけ」の定型文ならそのカテゴリ  2. 下のメニューでカテゴリを選んでいればそのカテゴリ
 // 3. 前回この定型文で記録したカテゴリ（範囲と下のメニューの選択に合うもの）  4. 今までどおりの初期値
 function resolveTemplateCategory(t) {
-    const exists = n => !!n && categories.some(c => c.name === n);
+    const exists = n => !!n && categories.some(c => c.name === n && !c.archivedAt); // アーカイブしたカテゴリには新しく書かない
     const sc = scopeCat(t.scope);
     if (sc !== null && exists(sc)) return sc;
     const f = currentFilter;
@@ -87,7 +90,7 @@ function resolveTemplateCategory(t) {
     };
     const last = getTemplateLastCategory(t.id);
     if (exists(last) && (!tType || getLogCategoryType(last) === tType) && fitsFilter(last)) return last;
-    const firstOf = ty => { const c = categories.find(x => (x.type || '一般') === ty); return c ? c.name : null; };
+    const firstOf = ty => { const c = getActiveCategories().find(x => (x.type || '一般') === ty); return c ? c.name : null; };
     if (tType) return firstOf(tType);
     if (f.mode === 'type') return firstOf(f.value);
     return null; // 追記画面のいつもの初期値のまま
@@ -101,7 +104,7 @@ function resolveTemplateCategory(t) {
 function applyTemplateToAddModal(t, fresh) {
     if (!t) return;
     const cat = fresh ? resolveTemplateCategory(t) : scopeCat(t.scope);
-    if (cat && cat !== selectedAddCategory && categories.some(c => c.name === cat)) {
+    if (cat && cat !== selectedAddCategory && categories.some(c => c.name === cat && !c.archivedAt)) {
         selectedAddCategory = cat;
         renderModalCategoryChips('add', cat);
         updateMsgTypeVisibility('add', cat);

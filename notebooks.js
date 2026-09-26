@@ -1564,29 +1564,28 @@ function renderCategoryChipsForChangeModal(currentCatName) {
     if (!container) return;
     container.innerHTML = "";
 
-    const validTypes = appTypes.filter(t => typeNotebookSettings[t] !== false && categories.some(ca => (ca.type || "一般") === t));
-    validTypes.forEach(t => {
+    // アーカイブしたカテゴリは出さない（今のノートのカテゴリだけは「アーカイブ」の段に出す）
+    const active = getActiveCategories();
+    const addRow = (label, icon, list, archived) => {
         const row = document.createElement('div');
         row.className = 'category-type-row';
-        row.innerHTML = `<div style="display: flex; align-items: center; gap: 5px;"><span style="font-size: 12px;">${getTypeIcon(t)}</span><span class="category-type-name">${escapeHtml(t)}</span></div>`;
-
+        row.innerHTML = `<div style="display: flex; align-items: center; gap: 5px;"><span style="font-size: 12px;">${icon}</span><span class="category-type-name">${escapeHtml(label)}</span></div>`;
         const chipsWrap = document.createElement('div');
         chipsWrap.className = 'category-chips-wrap';
-
-        categories.filter(ca => (ca.type || "一般") === t).forEach(cat => {
+        list.forEach(cat => {
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = `category-chip ${cat.name === currentCatName ? 'selected notebook-selected' : ''}`;
+            btn.className = `category-chip ${archived ? 'is-archived' : ''} ${cat.name === currentCatName ? 'selected notebook-selected' : ''}`;
             btn.textContent = cat.name;
-            btn.onclick = () => {
-                applyNotebookCategoryChange(cat.name);
-            };
+            btn.onclick = () => { applyNotebookCategoryChange(cat.name); };
             chipsWrap.appendChild(btn);
         });
-
         row.appendChild(chipsWrap);
         container.appendChild(row);
-    });
+    };
+    appTypes.filter(t => typeNotebookSettings[t] !== false && active.some(ca => (ca.type || "一般") === t))
+        .forEach(t => addRow(t, getTypeIcon(t), active.filter(ca => (ca.type || "一般") === t), false));
+    if (isCategoryArchived(currentCatName)) addRow('アーカイブ', '📦', categories.filter(ca => ca.name === currentCatName), true);
     if (typeof fitCategoryChips === 'function') fitCategoryChips(container);
 }
 
@@ -3503,17 +3502,17 @@ async function deleteNotebookDirect(id) {
 }
 
 async function openAddNotebookModal() {
-    const validTypes = appTypes.filter(t => typeNotebookSettings[t] !== false && categories.some(c => (c.type || "一般") === t));
+    const validTypes = appTypes.filter(t => typeNotebookSettings[t] !== false && getActiveCategories().some(c => (c.type || "一般") === t));
     if (!validTypes.length) { 
         alert("Notebooksが有効なカテゴリがありません。設定を確認してください。"); 
         return; 
     }
 
-    let defCat = categories.find(c => (c.type || "一般") === validTypes[0]).name;
-    if (currentFilter.mode === 'category' && categories.some(c => c.name === currentFilter.value && validTypes.includes(c.type || "一般"))) {
+    let defCat = getActiveCategories().find(c => (c.type || "一般") === validTypes[0]).name;
+    if (currentFilter.mode === 'category' && getActiveCategories().some(c => c.name === currentFilter.value && validTypes.includes(c.type || "一般"))) {
         defCat = currentFilter.value;
     } else if (currentFilter.mode === 'type' && validTypes.includes(currentFilter.value)) { 
-        const f = categories.find(c => (c.type || "一般") === currentFilter.value); 
+        const f = getActiveCategories().find(c => (c.type || "一般") === currentFilter.value); 
         if (f) defCat = f.name; 
     }
 
