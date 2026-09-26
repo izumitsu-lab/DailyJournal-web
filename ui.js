@@ -635,7 +635,8 @@ function switchSettingsTab(t) {
     // ★ 'cloud' タブを配列に追加しました
     if (t === 'tags' && typeof renderSettingsTagList === 'function') renderSettingsTagList();
     if (t === 'data') renderStorageStatus();
-    ['general', 'types', 'categories', 'tags', 'data', 'cloud', 'sync'].forEach(p => {
+    if (t === 'templates' && typeof renderSettingsTemplateList === 'function') renderSettingsTemplateList();
+    ['general', 'types', 'categories', 'tags', 'templates', 'data', 'cloud', 'sync'].forEach(p => {
         const b = document.getElementById('tabBtn' + p.charAt(0).toUpperCase() + p.slice(1));
         const e = document.getElementById('settingsPage' + p.charAt(0).toUpperCase() + p.slice(1));
         if (b) b.classList.toggle('active', p === t); 
@@ -1896,6 +1897,7 @@ function deleteCategory(i) {
     const t = categories[i]; if (!confirm(`「${t.name}」を削除しますか？`)) return;
     categories.splice(i, 1); saveCategories();
     // そのカテゴリだけのタグは、タイプ全体のタグにする（タグ自体は消さない）
+    retargetTemplateScopes('cat:' + t.name, t.type || '一般');
     if (tagDefs.some(d => d.scope === 'cat:' + t.name)) { tagDefs.forEach(d => { if (d.scope === 'cat:' + t.name) d.scope = t.type || '一般'; }); saveTagDefs(); }
     if (currentFilter.mode === 'category' && currentFilter.value === t.name) { currentFilter = { mode: 'all', value: '' }; updateCategoryButtonUI(); }
     else if (currentFilter.mode === 'type' && !categories.some(c => (c.type || "一般") === currentFilter.value)) { currentFilter = { mode: 'all', value: '' }; updateCategoryButtonUI(); }
@@ -2791,7 +2793,7 @@ async function executeBatchHtmlExport() {
 // data: URI はサイズ上限があり、写真が多いと書き出しに失敗するため Blob で書き出す
 async function exportData() {
     try {
-        const p = { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, hideEmptyCards, deviceDisplayMode, journalData: await getJournalDataForExport(), notebookData: await getNotebookDataForExport() };
+        const p = { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, templateDefs, hideEmptyCards, deviceDisplayMode, journalData: await getJournalDataForExport(), notebookData: await getNotebookDataForExport() };
         const blob = new Blob([JSON.stringify(p)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url;
@@ -2828,6 +2830,7 @@ function importData(e) {
                     if (imp.typeSlackSettings && typeof imp.typeSlackSettings === 'object') { typeSlackSettings = imp.typeSlackSettings; saveTypeSlackSettings(); }
                     if (imp.typeNotebookSettings && typeof imp.typeNotebookSettings === 'object') { typeNotebookSettings = imp.typeNotebookSettings; saveTypeNotebookSettings(); }
                     if (Array.isArray(imp.tagDefs)) { sanitizeTagDefs(imp.tagDefs).forEach(d => { const ex = tagDefs.find(x => x.name === d.name); if (ex) Object.assign(ex, d); else tagDefs.push(d); }); saveTagDefs(); }
+                    if (Array.isArray(imp.templateDefs)) { sanitizeTemplateDefs(imp.templateDefs).forEach(d => { const i = templateDefs.findIndex(x => x.id === d.id); if (i !== -1) templateDefs[i] = d; else templateDefs.push(d); }); saveTemplateDefs(); }
                     if (imp.typeHomeSettings && typeof imp.typeHomeSettings === 'object') { typeHomeSettings = {}; Object.keys(imp.typeHomeSettings).forEach(k => { if (imp.typeHomeSettings[k] === false) typeHomeSettings[k] = false; }); saveTypeHomeSettings(); }
                     if (typeof imp.hideEmptyCards === 'boolean') { hideEmptyCards = imp.hideEmptyCards; localStorage.setItem('daily_journal_hide_empty', hideEmptyCards); applyHideEmptyCardsSetting(); }
                     if (['auto', 'mobile', 'desktop'].includes(imp.deviceDisplayMode)) { deviceDisplayMode = imp.deviceDisplayMode; localStorage.setItem('daily_journal_device_mode', deviceDisplayMode); applyDeviceModeSetting(); }

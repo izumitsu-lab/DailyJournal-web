@@ -837,6 +837,8 @@ function sanitizeSettingsData(s) {
     }
     // タグの登録簿。以前の版の端末が送った設定にはこの項目がない
     if (Array.isArray(s.tagDefs)) out.tagDefs = sanitizeTagDefs(s.tagDefs);
+    // 定型文。以前の版の端末が送った設定にはこの項目がない
+    if (Array.isArray(s.templateDefs)) out.templateDefs = sanitizeTemplateDefs(s.templateDefs);
     out._editedAt = typeof s._editedAt === 'string' ? s._editedAt : '';
     return out;
 }
@@ -862,11 +864,12 @@ function _saveSettingsBase(s) {
         typeSlackSettings: s.typeSlackSettings || {}, typeNotebookSettings: s.typeNotebookSettings || {},
         typeHomeSettings: s.typeHomeSettings || {},
         tagDefs: s.tagDefs || [],
+        templateDefs: s.templateDefs || [],
         _editedAt: s._editedAt || ''
     }));
 }
 function _currentSettings() {
-    return sanitizeSettingsData({ appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, _editedAt: getSettingsEditedAt() });
+    return sanitizeSettingsData({ appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, templateDefs, _editedAt: getSettingsEditedAt() });
 }
 
 // 並び順付きの一覧（タイプ名 / カテゴリ）のマージ。keyOf で同一項目を判定し、pick で中身を選ぶ
@@ -947,6 +950,10 @@ function _mergeSettings(base, local, remote) {
         tagDefs: remote.tagDefs
             ? _mergeOrderedList(base && base.tagDefs, local.tagDefs || [], remote.tagDefs, x => x.name, (b, l, r) => (l && (!b || !_sameItem(l, b))) ? l : (r || l))
             : (local.tagDefs || []).slice(),
+        // 定型文：ID ごとに、この端末で変えたもの（追加・編集・並べ替え）を優先
+        templateDefs: remote.templateDefs
+            ? _mergeOrderedList(base && base.templateDefs, local.templateDefs || [], remote.templateDefs, x => x.id, (b, l, r) => (l && (!b || !_sameItem(l, b))) ? l : (r || l))
+            : (local.templateDefs || []).slice(),
         _editedAt: remote._editedAt
     };
 }
@@ -969,6 +976,10 @@ async function _applySettingsData(s, editedAt = s._editedAt) {
         Object.keys(typeNotebookSettings).forEach(k => delete typeNotebookSettings[k]);
         Object.assign(typeNotebookSettings, s.typeNotebookSettings);
         localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings));
+    }
+    if (Array.isArray(s.templateDefs)) {
+        templateDefs.splice(0, templateDefs.length, ...s.templateDefs.map(d => Object.assign({}, d, { tags: (d.tags || []).slice() })));
+        localStorage.setItem('daily_journal_templates', JSON.stringify(templateDefs));
     }
     if (Array.isArray(s.tagDefs)) {
         tagDefs.splice(0, tagDefs.length, ...s.tagDefs.map(d => Object.assign({}, d)));
@@ -1081,7 +1092,7 @@ async function _pushSettings() {
 
     if (!getSettingsEditedAt()) localStorage.setItem(SETTINGS_EDITED_AT_KEY, new Date().toISOString());
     const data = JSON.parse(JSON.stringify({
-        appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs,
+        appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, templateDefs,
         _editedAt: getSettingsEditedAt()
     }));
     const payload = { user_id: supabaseUser.id, settings_data: data, updated_at: new Date().toISOString() };
@@ -1469,7 +1480,7 @@ async function cleanupUnusedCloudImages() {
         } else {
             const { error } = await supabaseClient.from('app_settings').upsert({
                 user_id: uid, images_cleaned_at: now,
-                settings_data: { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, _editedAt: getSettingsEditedAt() }
+                settings_data: { appTypes, categories, typeSlackSettings, typeNotebookSettings, typeHomeSettings, tagDefs, templateDefs, _editedAt: getSettingsEditedAt() }
             });
             if (error) throw error;
         }
@@ -1487,6 +1498,7 @@ function refreshUIAfterSync() {
         if (typeof renderSettingsTagList === 'function') renderSettingsTagList();
     }
     if (typeof refreshOpenTagUIs === 'function') refreshOpenTagUIs();
+    if (typeof refreshOpenTemplateUIs === 'function') refreshOpenTemplateUIs();
     // ノートを編集中は、カードを描き直すと入力中の内容が消えるので描画を控える（編集終了時に描画される）
     const editingNote = typeof currentActiveEditorNotebookId !== 'undefined' && currentActiveEditorNotebookId;
     if (!editingNote && typeof renderRightCards === 'function') renderRightCards();

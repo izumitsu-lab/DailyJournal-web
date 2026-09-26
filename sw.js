@@ -7,7 +7,7 @@
 // ・Supabase との通信（記録・画像・ログイン）は一切しまわない（常に直接やりとりする）
 //
 // 版を上げるときは、index.html の ?v= と main.js の APP_VERSION と一緒に、下の VERSION もそろえる。
-const VERSION = '2026.09.26-2';
+const VERSION = '2026.09.26-3';
 const APP_CACHE = 'dj-app-' + VERSION;
 const CDN_CACHE = 'dj-cdn-v1';
 
@@ -21,6 +21,7 @@ const APP_FILES = [
     `./notebooks.js?v=${VERSION}`,
     `./ui.js?v=${VERSION}`,
     `./tags.js?v=${VERSION}`,
+    `./templates.js?v=${VERSION}`,
     `./supabase-sync.js?v=${VERSION}`,
     './favicon-32.png',
     './apple-touch-icon.png'

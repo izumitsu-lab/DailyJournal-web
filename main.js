@@ -18,7 +18,7 @@ window.addEventListener('orientationchange', () => {
 updateAppHeight();
 
 // アプリの版（index.html の APP_HTML_VERSION・?v= と同じ値にする）
-const APP_VERSION = '2026.09.26-2';
+const APP_VERSION = '2026.09.26-3';
 function applyAppVersionLabel() {
     const el = document.getElementById('appVersionLabel');
     if (!el) return;
@@ -78,6 +78,32 @@ function sanitizeTagDefs(arr) {
     return out;
 }
 let tagDefs = (() => { try { return sanitizeTagDefs(JSON.parse(localStorage.getItem('daily_journal_tags') || '[]')); } catch (e) { return []; } })();
+// 定型文（追記画面を「少し進めた状態」で開くためのひな形）
+// [{ id, name, icon, scope（タグと同じ：'common' / タイプ名 / 'cat:カテゴリ名'）, text（＿の位置にカーソル）, tags, slackType }]
+// カテゴリは範囲から決まる（'cat:〜' ならそのカテゴリ、それ以外は開くときに決める）。設定と一緒にクラウドで同期される
+function sanitizeTemplateDefs(arr) {
+    if (!Array.isArray(arr)) return [];
+    const seen = new Set(), out = [];
+    for (const d of arr) {
+        // ※このファイルの読み込み途中でも呼ばれるので、後ろで定義している SAFE_ID_RE ではなくここで判定する
+        if (!d || typeof d !== 'object' || typeof d.id !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(d.id) || seen.has(d.id)) continue;
+        const name = typeof d.name === 'string' ? d.name.trim().slice(0, 40) : '';
+        if (!name) continue;
+        seen.add(d.id);
+        out.push({
+            id: d.id,
+            name,
+            icon: typeof d.icon === 'string' ? Array.from(d.icon.trim()).slice(0, 2).join('') : '',
+            scope: (typeof d.scope === 'string' && d.scope.trim() && d.scope.length <= 60) ? d.scope : TAG_COMMON,
+            text: typeof d.text === 'string' ? d.text.slice(0, 2000) : '',
+            tags: sanitizeTagList(d.tags),
+            slackType: (d.slackType === 'incoming' || d.slackType === 'outgoing') ? d.slackType : null
+        });
+        if (out.length >= 100) break;
+    }
+    return out;
+}
+let templateDefs = (() => { try { return sanitizeTemplateDefs(JSON.parse(localStorage.getItem('daily_journal_templates') || '[]')); } catch (e) { return []; } })();
 let typeHomeSettings = (() => { try { const v = JSON.parse(localStorage.getItem('daily_journal_type_home')); return (v && typeof v === 'object') ? v : {}; } catch (e) { return {}; } })();
 
 // デフォルトで明るいテーマ（ライトテーマ）を有効化
@@ -871,6 +897,7 @@ function renameType(oldName, newName) {
 
     tagDefs.forEach(d => { if (d.scope === oldName) d.scope = newName; });
     saveTagDefs();
+    retargetTemplateScopes(oldName, newName);
 
     if (typeHomeSettings[oldName] !== undefined) {
         typeHomeSettings[newName] = typeHomeSettings[oldName];
@@ -916,6 +943,7 @@ function deleteType(typeName) {
     // そのタイプのタグは「共通」にする（タグ自体は消さない）
     tagDefs.forEach(d => { if (d.scope === typeName) d.scope = TAG_COMMON; });
     saveTagDefs();
+    retargetTemplateScopes(typeName, TAG_COMMON);
 
     if (currentFilter.mode === 'type' && currentFilter.value === typeName) {
         currentFilter = { mode: 'all', value: '' };
@@ -971,6 +999,8 @@ async function renameCategory(oldName, newName) {
         tagDefs.forEach(d => { if (d.scope === 'cat:' + oldName) d.scope = 'cat:' + newName; });
         saveTagDefs();
     }
+    retargetTemplateScopes('cat:' + oldName, 'cat:' + newName);
+    if (typeof renameTemplateLastCategory === 'function') renameTemplateLastCategory(oldName, newName);
     if (selectedAddCategory === oldName) selectedAddCategory = newName;
     if (selectedEditCategory === oldName) selectedEditCategory = newName;
     if (currentNotebookCategory === oldName) currentNotebookCategory = newName;
@@ -1072,6 +1102,13 @@ async function _syncAndMigrateCategoriesInner() {
 function saveCategories() { if (_tabInactive) return; localStorage.setItem('daily_journal_categories', JSON.stringify(categories)); markSettingsEdited(); }
 function saveTypeSlackSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_slack', JSON.stringify(typeSlackSettings)); markSettingsEdited(); }
 function saveTypeNotebookSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_notebook', JSON.stringify(typeNotebookSettings)); markSettingsEdited(); }
+function saveTemplateDefs() { if (_tabInactive) return; localStorage.setItem('daily_journal_templates', JSON.stringify(templateDefs)); markSettingsEdited(); }
+// 範囲の付け替え（タイプ・カテゴリの名前変更や削除に合わせる）。変わったら保存する
+function retargetTemplateScopes(from, to) {
+    let changed = false;
+    templateDefs.forEach(t => { if (t.scope === from) { t.scope = to; changed = true; } });
+    if (changed) saveTemplateDefs();
+}
 function saveTagDefs() { if (_tabInactive) return; localStorage.setItem('daily_journal_tags', JSON.stringify(tagDefs)); markSettingsEdited(); }
 function saveTypeHomeSettings() { if (_tabInactive) return; localStorage.setItem('daily_journal_type_home', JSON.stringify(typeHomeSettings)); markSettingsEdited(); }
 function isTypeShownOnHome(type) { return typeHomeSettings[type] !== false; }

@@ -17,9 +17,9 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    <link rel="stylesheet" href="style.css?v=2026.09.26-2">
+    <link rel="stylesheet" href="style.css?v=2026.09.26-3">
     <!-- 版：ファイルを差し替えたら、ここと main.js の APP_VERSION、sw.js の VERSION、上下の ?v= をそろえて更新する -->
-    <script>window.APP_HTML_VERSION = '2026.09.26-2';</script>
+    <script>window.APP_HTML_VERSION = '2026.09.26-3';</script>
 
     <!-- PC/スマホでのボタン切り替え用スタイル -->
     <style>
@@ -419,13 +419,17 @@
                 <label class="slot-picker" title="タップして時刻を変える"><span class="modal-time-badge" id="modalCurrentTimeBadge">12:00</span><input type="time" class="slot-input" id="addSlotTime" onclick="openSlotPicker(this)" onchange="changeAddSlot()"></label>
             </div>
             <div class="slot-hint" id="addSlotHint" style="display: none;"></div>
+            <div class="tpl-note" id="addTemplateNote" style="display: none;"></div>
             <div class="draft-bar" id="addDraftBar" style="display: none;"><span class="draft-bar-text"></span><button type="button" class="draft-bar-btn" onclick="discardModalDraft('add')">破棄</button></div>
             
             <div class="category-picker-section">
                 <div class="category-chips-scroll" id="addCategoryChipsContainer"></div>
             </div>
 
-            <textarea id="journalInputText" placeholder="いま起きたことや記録を入力..."></textarea>
+            <div class="tpl-text-wrap">
+                <textarea id="journalInputText" placeholder="いま起きたことや記録を入力..."></textarea>
+                <button type="button" class="tpl-open-btn" onclick="toggleTemplatePopoverInModal(this)" title="定型文から入れる" aria-label="定型文から入れる"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></button>
+            </div>
 
             <div class="photo-attach-section">
                 <div class="photo-attach-bar">
@@ -656,6 +660,7 @@
                 </div>
                 <div class="tag-fav-row" id="editTagFavs" style="display: none;"></div>
             </div>
+            <button type="button" class="storage-link-btn tpl-from-log-btn" onclick="createTemplateFromEditModal()">📝 この記録を定型文にする</button>
 
             <div class="modal-actions three-columns">
                 <button class="modal-btn delete" onclick="deleteFromEditModal()">削除</button>
@@ -792,6 +797,10 @@
                 <button type="button" class="settings-nav-btn" id="tabBtnTags" onclick="switchSettingsTab('tags')">
                     <span class="settings-nav-icon">🏷️</span>
                     <span>タグ</span>
+                </button>
+                <button type="button" class="settings-nav-btn" id="tabBtnTemplates" onclick="switchSettingsTab('templates')">
+                    <span class="settings-nav-icon">📝</span>
+                    <span>定型文</span>
                 </button>
                 <button type="button" class="settings-nav-btn" id="tabBtnData" onclick="switchSettingsTab('data')">
                     <span class="settings-nav-icon">💾</span>
@@ -934,6 +943,19 @@
                         <select class="settings-select" id="newTagScope"></select>
                         <button type="button" class="data-action-btn primary-btn" onclick="addTagFromSettings()">追加</button>
                     </div>
+                </div>
+            </div>
+
+            <!-- 定型文 -->
+            <div class="settings-page" id="settingsPageTemplates">
+                <div class="settings-card-box">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                        <span class="settings-card-title" style="margin-bottom: 0;">定型文</span>
+                        <span id="templateCountIndicator" style="font-size: 12px; color: var(--text-secondary); font-weight: 700;">0件</span>
+                    </div>
+                    <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.5;">追記画面を「少し進めた状態」で開くためのひな形です。下の「追記」ボタンを長押しするか、追記画面の本文欄の右上のアイコンから使います。範囲はタグと同じで、「〜だけ」にすると記録先もそのカテゴリになります。</div>
+                    <div class="settings-item-list" id="settingsTemplateList"></div>
+                    <button type="button" class="data-action-btn primary-btn" style="margin-top: 8px;" onclick="openTemplateEditor(null)">＋ 定型文を作る</button>
                 </div>
             </div>
 
@@ -1217,15 +1239,16 @@ CREATE POLICY "User can manage their own images" ON storage.objects FOR ALL TO a
 
     <!-- スクリプト群 -->
     <!-- HTMLサニタイザ（オフラインでも動くよう同梱） -->
-    <script src="purify.min.js?v=2026.09.26-2"></script>
-    <script src="main.js?v=2026.09.26-2"></script>
-    <script src="calendar.js?v=2026.09.26-2"></script>
-    <script src="notebooks.js?v=2026.09.26-2"></script>
-    <script src="ui.js?v=2026.09.26-2"></script>
-    <script src="tags.js?v=2026.09.26-2"></script>
+    <script src="purify.min.js?v=2026.09.26-3"></script>
+    <script src="main.js?v=2026.09.26-3"></script>
+    <script src="calendar.js?v=2026.09.26-3"></script>
+    <script src="notebooks.js?v=2026.09.26-3"></script>
+    <script src="ui.js?v=2026.09.26-3"></script>
+    <script src="tags.js?v=2026.09.26-3"></script>
+    <script src="templates.js?v=2026.09.26-3"></script>
     
     <!-- ☁️ 追加: Supabase 連携ロジックを担う新規ファイル -->
-    <script src="supabase-sync.js?v=2026.09.26-2"></script>
+    <script src="supabase-sync.js?v=2026.09.26-3"></script>
 
     <!-- アプリ復帰時の同期は supabase-sync.js 側で「未送信分の送信 → 差分取得」の順に行います -->
 
